@@ -341,12 +341,12 @@ def loss_mse_select_clipped(y_true, y_pred) :
     wei = y_true[:,:,:,:,-1:]
     pred = y_pred[:,:,:,:,:-1]
     true =  y_true[:,:,:,:,:-1]
-    inv_sd = tf.constant([1/0.404, 1/0.478, 1/1.9, 1/2, 1/150], dtype=tf.float32) # inverse standard deviation of each TP
-    mean = tf.constant([0, 0, 0, 0, 95], dtype=tf.float32) # mean of each TP
-   # Standardization of target and predicted TPs
-    pred = tf.subtract(pred, mean)* inv_sd
-    true = tf.subtract(true,mean)*inv_sd
-    out =K.square(tf.clip_by_value(pred-true,-5,5))*wei  # Clipping at +/-5 sigmas
+    norm = tf.constant([1/2, 1/3, 1/8, 1/6, 1], dtype=tf.float32) # scalar to normalize loss functiom parameters
+    wei = wei*norm
+    pred = pred*norm
+    true = true*norm
+    out =K.square(tf.clip_by_value(pred-true,-1,1))*wei # clipping adjusted to 1
+    # Clipping at 5 since all our param should be in the [-5, 5] range 
     return tf.reduce_sum(out, axis=None)/(tf.reduce_sum(wei,axis=None)*5+0.00001) #5=parNum
 
 # Generator used to load all the input file in the LOCAL_INPUT=False workflow
@@ -394,10 +394,6 @@ def Generator2(filepath,batch_size=0,count=False):
                     target_prob = np.reshape(chunk["trackProb"], (nev,jetDim,jetDim,overlapNum,1))
 
                     target_prob = concatenatenp([target_prob,chunk["trackPar"][:,:,:,:,-1:]],axis=4)
-                    #zero_elements = target_prob[:,:,:,:,-1]==0 #build an array that's True for every 0-valued entry
-                    #target_prob[:,:,:,:,-1]=1.0/target_prob[:,:,:,:,-1] #invert everything, which will send all 0 pt entries to inf
-                    #target_prob[:,:,:,:,-1][zero_elements] = 0 #reassign the inf values back to 0
-                    
                     ## debug
                     ##pdb.set_trace()
                     yield [chunk['cluster_measured'][:,:,:,0:layNum],chunk["jet_eta"],chunk["jet_pt"]],[chunk["trackPar"],target_prob]
@@ -693,56 +689,37 @@ if TRAIN or PREDICT :
 #    reshaped_prob = Reshape((jetDim,jetDim,overlapNum,2))(conv1_3_1)
 #############################################################################################################################
 
- # DeepCore 2.0/2.1 Architecture
-#    conv30_9 = Conv2D(50,7, data_format="channels_last", input_shape=(jetDim,jetDim,layNum+2), activation='relu',padding="same")(ComplInput)
-#    conv30_7 = Conv2D(40,5, data_format="channels_last", activation='relu',padding="same")(conv30_9)
-#    conv30_5 = Conv2D(40,5, data_format="channels_last", activation='relu',padding="same")(conv30_7)#
-#    conv20_5 = Conv2D(30,5, data_format="channels_last", activation='relu',padding="same")(conv30_5)
-#    conv15_5 = Conv2D(30,3, data_format="channels_last", activation='relu',padding="same")(conv20_5)
-
-#    conv15_3_1 = Conv2D(30,3, data_format="channels_last",activation='relu', padding="same")(conv15_5)
-#    conv15_3_2 = Conv2D(30,3, data_format="channels_last",activation='relu', padding="same")(conv15_3_1)
-#    conv15_3_3 = Conv2D(30,3, data_format="channels_last",activation='relu', padding="same")(conv15_3_2) #(12,3)
-#    conv15_3 = Conv2D(18,3, data_format="channels_last",padding="same")(conv15_3_3) #(12,3)
-#    reshaped = Reshape((jetDim,jetDim,overlapNum,parNum+1))(conv15_3)
-
-#    conv12_3_1 = Conv2D(30,3, data_format="channels_last", activation='relu', padding="same")(conv15_5)  #new
-#    conv1_3_2 = Conv2D(25,3, data_format="channels_last", activation='relu', padding="same")(conv12_3_1) #drop7lb   #new
-#    conv1_3_3 = Conv2D(20,3, data_format="channels_last", activation='relu',padding="same")(conv1_3_2) #new
-#    conv1_3_1 = Conv2D(6,3, data_format="channels_last", activation='sigmoid', padding="same")(conv1_3_3)
-#    reshaped_prob = Reshape((jetDim,jetDim,overlapNum,2))(conv1_3_1)
-#######################################################################################################################
-
- # DeepCore 2.2 Architecture
+ # T1017 and T1024 Architecture
     conv30_9 = Conv2D(50,7, data_format="channels_last", input_shape=(jetDim,jetDim,layNum+2), activation='relu',padding="same")(ComplInput)
     conv30_7 = Conv2D(40,5, data_format="channels_last", activation='relu',padding="same")(conv30_9)
     conv30_5 = Conv2D(40,5, data_format="channels_last", activation='relu',padding="same")(conv30_7)#
     conv20_5 = Conv2D(30,5, data_format="channels_last", activation='relu',padding="same")(conv30_5)
     conv15_5 = Conv2D(30,3, data_format="channels_last", activation='relu',padding="same")(conv20_5)
 
-    conv15_3_1 = Conv2D(18,3, data_format="channels_last",activation='relu', padding="same")(conv15_5)
-    conv15_3_2 = Conv2D(18,3, data_format="channels_last",activation='relu', padding="same")(conv15_3_1)
-    conv15_3_3 = Conv2D(18,3, data_format="channels_last",activation='relu', padding="same")(conv15_3_2) #(12,3)
+    conv15_3_1 = Conv2D(30,3, data_format="channels_last",activation='relu', padding="same")(conv15_5)
+    conv15_3_2 = Conv2D(30,3, data_format="channels_last",activation='relu', padding="same")(conv15_3_1)
+    conv15_3_3 = Conv2D(30,3, data_format="channels_last",activation='relu', padding="same")(conv15_3_2) #(12,3)
     conv15_3 = Conv2D(18,3, data_format="channels_last",padding="same")(conv15_3_3) #(12,3)
     reshaped = Reshape((jetDim,jetDim,overlapNum,parNum+1))(conv15_3)
 
     conv12_3_1 = Conv2D(30,3, data_format="channels_last", activation='relu', padding="same")(conv15_5)  #new
-    conv1_3_2 = Conv2D(30,3, data_format="channels_last", activation='relu', padding="same")(conv12_3_1) #drop7lb   #new
-    conv1_3_3 = Conv2D(30,3, data_format="channels_last", activation='relu',padding="same")(conv1_3_2) #new
+    conv1_3_2 = Conv2D(25,3, data_format="channels_last", activation='relu', padding="same")(conv12_3_1) #drop7lb   #new
+    conv1_3_3 = Conv2D(20,3, data_format="channels_last", activation='relu',padding="same")(conv1_3_2) #new
     conv1_3_1 = Conv2D(6,3, data_format="channels_last", activation='sigmoid', padding="same")(conv1_3_3)
     reshaped_prob = Reshape((jetDim,jetDim,overlapNum,2))(conv1_3_1)
 #######################################################################################################################
+
     model = Model([NNinputs,NNinputs_jeta,NNinputs_jpt],[reshaped,reshaped_prob])
     
     # Made it easier to adjust learning rate
     #anubi = keras.optimizers.Adam(learning_rate=0.00001)#after epochs 252 (with septs/20 and batch_size 64)
     #Learning rate adjustments:
     # anubi = keras.optimizers.Adam(learning_rate=0.01)  #10-2
-    #anubi = keras.optimizers.Adam(learning_rate=0.001)  #10-3
+    # anubi = keras.optimizers.Adam(learning_rate=0.001)  #10-3
     #anubi = keras.optimizers.Adam(learning_rate=0.0001)  #10-4
     #anubi = keras.optimizers.Adam(learning_rate=0.00001)  #10-5
-    anubi = keras.optimizers.Adam(learning_rate=0.000001)  #10-6
-    # anubi = keras.optimizers.Adam(learning_rate=0.0000001)  #10-7
+    anubi = keras.optimizers.Adam(learning_rate=0.000002)  #10-6
+    #anubi = keras.optimizers.Adam(learning_rate=0.0000001)  #10-7
     # anubi = keras.optimizers.Adam(learning_rate=0.00000001)  #10-8
     
     # Loss function adjustments:
@@ -881,8 +858,8 @@ if TRAIN :
       plt.plot(arr_full[:,0], arr_full[:,1])
       plt.plot(arr_full[:,0], arr_full[:,2])
       pylab.title('Model Loss')
-      pylab.ylabel('Loss')
-      pylab.xlabel('Epoch')
+      pylab.ylabel('loss')
+      pylab.xlabel('epoch')
       plt.grid(True)
       pylab.legend(['train', 'validation'], loc='upper right')
       pdf_loss.savefig(1000, bbox_inches='tight')
@@ -891,9 +868,9 @@ if TRAIN :
       plt.yscale('log')
       plt.plot(arr_full[:,0], arr_full[:,3])
       plt.plot(arr_full[:,0], arr_full[:,4])
-      pylab.title('TP Loss')
-      pylab.ylabel('Loss')
-      pylab.xlabel('Epoch')
+      pylab.title('Model Loss (parameters)')
+      pylab.ylabel('loss')
+      pylab.xlabel('epoch')
       plt.grid(True)
       pylab.legend(['train', 'validation'], loc='upper right')
       pdf_loss.savefig(1001, bbox_inches='tight')
@@ -902,9 +879,9 @@ if TRAIN :
       plt.yscale('log')
       plt.plot(arr_full[:,0], arr_full[:,5])
       plt.plot(arr_full[:,0], arr_full[:,6])
-      pylab.title('TCP Loss')
-      pylab.ylabel('Loss')
-      pylab.xlabel('Epoch')
+      pylab.title('Model Loss (pixel maps)')
+      pylab.ylabel('loss')
+      pylab.xlabel('epoch')
       plt.grid(True)
       pylab.legend(['train', 'validation'], loc='upper right')
       pdf_loss.savefig(1002, bbox_inches='tight')

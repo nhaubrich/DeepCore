@@ -30,10 +30,11 @@ config.JobType.numCores=8
 config.JobType.maxMemoryMB=20000
 
 #config.Data.splitting = 'EventBased'
-config.Data.unitsPerJob = 1000
-NJOBS = 20  
+config.Data.unitsPerJob = 5000
+NJOBS = 380 
 config.Data.totalUnits = config.Data.unitsPerJob * NJOBS
 
+config.Data.outLFNDirBase = '/store/group/phys_tracking/Hichemb/DeepCoreNtuplizer/' 
 ##config.Data.outLFNDirBase = '/store/user/%s/DeepCoreNtuplizerInput' % (getUsernameFromCRIC())
 #config.Data.outLFNDirBase = '/eos/uscms/store/user/hichemb/DeepCoreNtuplizerInput' ## line needs to be removed since outdated
 config.Data.publication = True
@@ -41,4 +42,5 @@ config.Data.outputDatasetTag = 'DeepCoreNtuplizerInput'
 
 #config.Site.storageSite = 'T2_IT_Pisa'
 # T1_RU_JINR_Disk
-config.Site.storageSite = 'T3_US_FNALLPC' 
+config.Site.storageSite = 'T2_CH_CERN' 
+##config.Site.storageSite = 'T3_US_FNALLPC' 

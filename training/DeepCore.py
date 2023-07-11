@@ -114,7 +114,12 @@ valSplit=0.2 # fraction of input used for validation
 # threshold to identify good prediction, need to be adjusted as needed
 #prob_thr =0.85 # Run 2 
 #prob_thr =0.36 # T0628
-prob_thr =0.32 # T1017
+#prob_thr =0.32 # T1017
+
+# DeepCore 2.2 Thresholds
+prob_thr =0.7
+dth = [0.0, 0.15, 0.3]
+dth1 = [ 0.1, 0.05, 0]
 
 #plotting configuration
 numPrint =5 #number of event saved in the root file
@@ -313,8 +318,12 @@ def loss_mse_select_clipped(y_true, y_pred) :
     wei = y_true[:,:,:,:,-1:]
     pred = y_pred[:,:,:,:,:-1]
     true =  y_true[:,:,:,:,:-1]
-    out =K.square(tf.clip_by_value(pred-true,-5,5))*wei
-    # Clipping at 5 since all our param should be in the [-5, 5] range 
+    inv_sd = tf.constant([1/0.404, 1/0.478, 1/1.9, 1/2, 1/150], dtype=tf.float32) # inverse standard deviation of each TP
+    mean = tf.constant([0, 0, 0, 0, 95], dtype=tf.float32) # mean of each TP
+   # Standardization of target and predicted TPs
+    pred = tf.subtract(pred, mean)* inv_sd
+    true = tf.subtract(true,mean)*inv_sd
+    out =K.square(tf.clip_by_value(pred-true,-5,5))*wei  # Clipping at +/-5 sigmas
     return tf.reduce_sum(out, axis=None)/(tf.reduce_sum(wei,axis=None)*5+0.00001) #5=parNum
 
 # Generator used to load all the input file in the LOCAL_INPUT=False workflow
@@ -619,22 +628,42 @@ if TRAIN or PREDICT :
 
 #############################################################################################################################
 
- # T1017 and T1024 Architecture
+ # DeepCore 2.0/2.1 Architecture
+#    conv30_9 = Conv2D(50,7, data_format="channels_last", input_shape=(jetDim,jetDim,layNum+2), activation='relu',padding="same")(ComplInput)
+#    conv30_7 = Conv2D(40,5, data_format="channels_last", activation='relu',padding="same")(conv30_9)
+#    conv30_5 = Conv2D(40,5, data_format="channels_last", activation='relu',padding="same")(conv30_7)#
+#    conv20_5 = Conv2D(30,5, data_format="channels_last", activation='relu',padding="same")(conv30_5)
+#    conv15_5 = Conv2D(30,3, data_format="channels_last", activation='relu',padding="same")(conv20_5)
+
+#    conv15_3_1 = Conv2D(30,3, data_format="channels_last",activation='relu', padding="same")(conv15_5)
+#    conv15_3_2 = Conv2D(30,3, data_format="channels_last",activation='relu', padding="same")(conv15_3_1)
+#    conv15_3_3 = Conv2D(30,3, data_format="channels_last",activation='relu', padding="same")(conv15_3_2) #(12,3)
+#    conv15_3 = Conv2D(18,3, data_format="channels_last",padding="same")(conv15_3_3) #(12,3)
+#    reshaped = Reshape((jetDim,jetDim,overlapNum,parNum+1))(conv15_3)
+
+#    conv12_3_1 = Conv2D(30,3, data_format="channels_last", activation='relu', padding="same")(conv15_5)  #new
+#    conv1_3_2 = Conv2D(25,3, data_format="channels_last", activation='relu', padding="same")(conv12_3_1) #drop7lb   #new
+#    conv1_3_3 = Conv2D(20,3, data_format="channels_last", activation='relu',padding="same")(conv1_3_2) #new
+#    conv1_3_1 = Conv2D(6,3, data_format="channels_last", activation='sigmoid', padding="same")(conv1_3_3)
+#    reshaped_prob = Reshape((jetDim,jetDim,overlapNum,2))(conv1_3_1)
+#######################################################################################################################
+
+ # DeepCore 2.2 Architecture
     conv30_9 = Conv2D(50,7, data_format="channels_last", input_shape=(jetDim,jetDim,layNum+2), activation='relu',padding="same")(ComplInput)
     conv30_7 = Conv2D(40,5, data_format="channels_last", activation='relu',padding="same")(conv30_9)
     conv30_5 = Conv2D(40,5, data_format="channels_last", activation='relu',padding="same")(conv30_7)#
     conv20_5 = Conv2D(30,5, data_format="channels_last", activation='relu',padding="same")(conv30_5)
     conv15_5 = Conv2D(30,3, data_format="channels_last", activation='relu',padding="same")(conv20_5)
 
-    conv15_3_1 = Conv2D(30,3, data_format="channels_last",activation='relu', padding="same")(conv15_5)
-    conv15_3_2 = Conv2D(30,3, data_format="channels_last",activation='relu', padding="same")(conv15_3_1)
-    conv15_3_3 = Conv2D(30,3, data_format="channels_last",activation='relu', padding="same")(conv15_3_2) #(12,3)
+    conv15_3_1 = Conv2D(18,3, data_format="channels_last",activation='relu', padding="same")(conv15_5)
+    conv15_3_2 = Conv2D(18,3, data_format="channels_last",activation='relu', padding="same")(conv15_3_1)
+    conv15_3_3 = Conv2D(18,3, data_format="channels_last",activation='relu', padding="same")(conv15_3_2) #(12,3)
     conv15_3 = Conv2D(18,3, data_format="channels_last",padding="same")(conv15_3_3) #(12,3)
     reshaped = Reshape((jetDim,jetDim,overlapNum,parNum+1))(conv15_3)
 
     conv12_3_1 = Conv2D(30,3, data_format="channels_last", activation='relu', padding="same")(conv15_5)  #new
-    conv1_3_2 = Conv2D(25,3, data_format="channels_last", activation='relu', padding="same")(conv12_3_1) #drop7lb   #new
-    conv1_3_3 = Conv2D(20,3, data_format="channels_last", activation='relu',padding="same")(conv1_3_2) #new
+    conv1_3_2 = Conv2D(30,3, data_format="channels_last", activation='relu', padding="same")(conv12_3_1) #drop7lb   #new
+    conv1_3_3 = Conv2D(30,3, data_format="channels_last", activation='relu',padding="same")(conv1_3_2) #new
     conv1_3_1 = Conv2D(6,3, data_format="channels_last", activation='sigmoid', padding="same")(conv1_3_3)
     reshaped_prob = Reshape((jetDim,jetDim,overlapNum,2))(conv1_3_1)
 #######################################################################################################################
@@ -806,7 +835,7 @@ if PREDICT :
         #Barrel training (used in presentation, CMSSW PR...)
         ## model.load_weights('data/DeepCore_barrel_weights.246-0.87.hdf5')
         ## model.load_weights('/storage/local/data1/gpuscratch/hichemb/Training0302/DeepCore_train_0302_252.h5')
-        model.load_weights('/storage/local/data1/gpuscratch/hichemb/DeepCore_git/DeepCore/Training1017/DeepCore_train_1017.h5')
+        model.load_weights('/storage/local/data1/gpuscratch/hichemb/DeepCore_git/DeepCore/Training23_0622/DeepCore_train_0622.h5')
         #EndCap training, last weights (not satisfactory, consider to restart)      
         # model.load_weights('DeepCore_ENDCAP_train_ep150.h5')
         #model.load_weights('DeepCore_train_ev{ev}_ep{ep}.h5'.format(ev=jetNum,ep=epochs+start_epoch)) 
@@ -1046,6 +1075,8 @@ if OUTPUT :
          if(not brokenLay_flag) :
             brokenLay_cut = 0.35
 
+
+
          for lay in range(layNum) :
              canvasTot[jet][lay].cd()
              mapTot[jet][lay].GetXaxis().SetRangeUser(-jetDim,jetDim)
@@ -1174,6 +1205,14 @@ if OUTPUT :
                 #  j_eff=j+validation_offset use this if you want to avoid to fill the histos with the event used in the training, but you have also to change the j range()
                  for x in range(jetDim) :
                      for y in range(jetDim) :
+                         l2off = True
+                         l134off = True
+                         for lr in range(4):
+                            if(input_[j_eff][x][y][lr] > 0.0001) :
+                                  if lr == 1:
+                                     l2off = False
+                                  else: 
+                                     l134off = False
                          for trk in range(overlapNum) :
                             # Plotting all true target
                             #  if target_prob[j_eff][x][y][trk] == 1 :
@@ -1183,7 +1222,9 @@ if OUTPUT :
                             # T0628
                             #  if (validation_prob[j_eff][x][y][trk] > (prob_thr - 0.16*trk)) and (target_prob[j_eff][x][y][trk] == 1):# only "associated" 
                             # T1017
-                              if (validation_prob[j_eff][x][y][trk] > (prob_thr - 0.14*trk)) and (target_prob[j_eff][x][y][trk] == 1):# only "associated" 
+                            #  if (validation_prob[j_eff][x][y][trk] > (prob_thr - 0.14*trk)) and (target_prob[j_eff][x][y][trk] == 1):# only "associated" 
+                            # DeepCore 2.2
+                            if (validation_prob[j_eff][x][y][trk] > prob_thr + dth[trk] + (0.3 if l2off else 0) + (dth1[trk] if l134off else 0) ) and target_prob[j_eff][x][y][trk] == 1:# only "associated" 
                                      if((par==0) or (par ==1)) :
                                          if not DRAW_ONLY: bins.append((validation_par[j_eff][x][y][trk][par] - target_[j_eff][x][y][trk][par])*100)
                                          if not DRAW_ONLY : bins_pred.append(validation_par[j_eff][x][y][trk][par]*100)
@@ -1222,14 +1263,14 @@ if OUTPUT :
                  pylab.title('Residual Distribution - $\Delta x$',fontsize=22)
                  if not DRAW_ONLY : mean = np.array(bins).mean()
                  if not DRAW_ONLY : sigma = np.array(bins).std()
-                 if not DRAW_ONLY :  plt.text(80, 50000, "Mean =%.2f $\mu$m"%(mean), size=14)
-                 if not DRAW_ONLY : plt.text(80, 60000, "$\sigma_{\Delta x}$ = %.1f $\mu$m"%(sigma), size=14)
+                 if not DRAW_ONLY :  plt.text(80, 35000, "Mean =%.2f $\mu$m"%(mean), size=14)
+                 if not DRAW_ONLY : plt.text(80, 40000, "$\sigma_{\Delta x}$ = %.1f $\mu$m"%(sigma), size=14)
              if(par == 1) :
                  pylab.title('Residual Distribution - $\Delta y$',fontsize=22)
                  if not DRAW_ONLY : mean = np.array(bins).mean()
                  if not DRAW_ONLY : sigma = np.array(bins).std()
-                 if not DRAW_ONLY :  plt.text(100, 50000, "Mean =%.1f $\mu$m"%(mean), size=14)
-                 if not DRAW_ONLY : plt.text(100, 60000, "$\sigma_{\Delta y}$ = %.1f $\mu$m"%(sigma), size=14)
+                 if not DRAW_ONLY :  plt.text(100, 40000, "Mean =%.1f $\mu$m"%(mean), size=14)
+                 if not DRAW_ONLY : plt.text(100, 50000, "$\sigma_{\Delta y}$ = %.1f $\mu$m"%(sigma), size=14)
 
              if(par == 2) :
                  pylab.title('Residual Distribution - $\Delta \eta$',fontsize=22)
@@ -1241,21 +1282,21 @@ if OUTPUT :
                  ##plt.text(0.0025,-.025,r'$p_T^{jet}>1$ TeV, $|\eta^{jet}|<1.4$',size=14)
                  if not DRAW_ONLY : mean = np.array(bins).mean()
                  if not DRAW_ONLY : sigma = np.array(bins).std()
-                 if not DRAW_ONLY :  plt.text(0.01, 130000, "Mean = 0", size=14)
-                 if not DRAW_ONLY : plt.text(0.01, 150000, "$\sigma_{\Delta \eta}$ = %.3f"%(sigma), size=14)
+                 if not DRAW_ONLY :  plt.text(0.01, 60000, "Mean = 0", size=14)
+                 if not DRAW_ONLY : plt.text(0.01, 80000, "$\sigma_{\Delta \eta}$ = %.3f"%(sigma), size=14)
 
              if(par == 3) :
                  pylab.title('Residual Distribution - $\Delta \phi$',fontsize=22)
                  if not DRAW_ONLY : mean = np.array(bins).mean()
                  if not DRAW_ONLY : sigma = np.array(bins).std()
-                 if not DRAW_ONLY :  plt.text(0.01, 80000, "Mean = 0", size=14)
-                 if not DRAW_ONLY : plt.text(0.01, 90000, "$\sigma_{\Delta \phi}$ = %.3f"%(sigma), size=14)
+                 if not DRAW_ONLY :  plt.text(0.01, 50000, "Mean = 0", size=14)
+                 if not DRAW_ONLY : plt.text(0.01, 60000, "$\sigma_{\Delta \phi}$ = %.3f"%(sigma), size=14)
              if(par == 4) :
-                 pylab.title('Residual Distribution - $1/p_T$',fontsize=22)
+                 pylab.title('Residual Distribution - $p_T$',fontsize=22)
                  if not DRAW_ONLY : mean = np.array(bins).mean()
                  if not DRAW_ONLY : sigma = np.array(bins).std()
-                 if not DRAW_ONLY :  plt.text(4, 28000, "Mean =%.1f"%(mean), size=14)
-                 if not DRAW_ONLY : plt.text(4, 25000, "$\sigma_{\Delta(1/p_T)rel}$ = %.1f"%(sigma), size=14)
+                 if not DRAW_ONLY :  plt.text(4, 28000, "Mean =%.3f"%(mean), size=14)
+                 if not DRAW_ONLY : plt.text(4, 25000,"$\sigma_{\Delta(p_T)rel}$ = %.3f"%(sigma), size=14)
                  #if not DRAW_ONLY :  plt.text(700, 28000, "Mean =%.1f"%(mean), size=14)
                  #if not DRAW_ONLY : plt.text(700, 25000, "$\sigma_{\Delta(p_T)}$ = %.1f"%(sigma), size=14)
              pylab.ylabel('TCP',fontsize=18)
@@ -1264,8 +1305,8 @@ if OUTPUT :
                  pylab.xlabel('Prediction-Target [$\mu$m]',fontsize=22)
              elif(par==2 or par==3) : #relative
                  pylab.xlabel('Prediction-Target',fontsize=22)
-            #  else : #relative
-            #      pylab.xlabel('prediction-target [1/GeV]',fontsize=22)
+             else : #relative
+                 pylab.xlabel('(Prediction-Target)/Target [GeV]',fontsize=22)
 
              plt.grid(True)
              if(RGB) :
@@ -1276,15 +1317,14 @@ if OUTPUT :
 
              plt.figure()
              if(par == 0):
-                 pylab.hist(bins_target,80, facecolor='royalblue', alpha=0.75,range=(-200,200))
+                 pylab.hist(bins_target,100, facecolor='royalblue', alpha=0.75,range=(-100,100))
              if(par ==1) :
-                 pylab.hist(bins_target,120, facecolor='royalblue', alpha=0.75,range=(-300,300))
+                 pylab.hist(bins_target,150, facecolor='royalblue',alpha=0.75,range=(-150,150))
              if((par == 2) or (par ==3 )) :
                  pylab.hist(bins_target,90, facecolor='royalblue', alpha=0.75,range=(-0.05,0.04))
              if (par ==4):
-                 pylab.hist(bins_target,100, facecolor='royalblue',alpha=0.75,range=(-0.05,0.20))
+                 pylab.hist(bins_target,100,facecolor='royalblue',alpha=0.75,range=(0,500))
                  #pylab.hist(bins_target,200, facecolor='royalblue', alpha=0.75,range=(-1000,1000))
-
              if(par == 0) :
                  pylab.title('Target Distribution - $\Delta x$',fontsize=22)
              if(par == 1) :
@@ -1294,7 +1334,7 @@ if OUTPUT :
              if(par == 3) :
                  pylab.title('Target Distribution - $\Delta \phi$',fontsize=22)
              if(par == 4) :
-                 pylab.title('Target Distribution - $1/p_T$',fontsize=22)
+                 pylab.title('Target Distribution - $p_T$',fontsize=22)
              if(par==0 or par==1) :
                  pylab.xlabel('Target [$\mu$m]',fontsize=18)
              if(par==2 or par==3) :
@@ -1302,7 +1342,7 @@ if OUTPUT :
              if (par ==4) :
                  ##pylab.xlabel('prediction-target [1/GeV]',fontsize=18)
                  ## fixed to correct label
-                 pylab.xlabel('Target [1/GeV]',fontsize=18)
+                 pylab.xlabel('Target [GeV]',fontsize=18)
              pylab.ylabel('TCP',fontsize=18)
              plt.grid(True)
              if(RGB) :
@@ -1315,13 +1355,13 @@ if OUTPUT :
              
 
              if(par == 0):
-                 pylab.hist(bins_pred,80, facecolor='red', alpha=0.75,range=(-200,200))
+                 pylab.hist(bins_pred,150, facecolor='red', alpha=0.75,range=(-150,150))
              if(par ==1) :
-                 pylab.hist(bins_pred,120, facecolor='red', alpha=0.75,range=(-300,300))
+                 pylab.hist(bins_pred,150, facecolor='red', alpha=0.75,range=(-150,150))
              if((par == 2) or (par ==3 )) :
                  pylab.hist(bins_pred,70, facecolor='red', alpha=0.75,range=(-0.04,0.03))
              if (par ==4) :
-                 pylab.hist(bins_pred,100, facecolor='red',alpha=0.75,range=(-0.05,0.2))
+                 pylab.hist(bins_pred,100, facecolor='red',alpha=0.75,range=(0,500))
                  #pylab.hist(bins_pred,200, facecolor='red',alpha=0.75,range=(-1000,1000))
 
              if(par == 0) :
@@ -1333,7 +1373,7 @@ if OUTPUT :
              if(par == 3) :
                  pylab.title('Prediction Distribution - $\Delta \phi$',fontsize=22)
              if(par == 4) :
-                 pylab.title('Prediction Distribution - $1/p_T$',fontsize=22)
+                 pylab.title('Prediction Distribution - $p_T$',fontsize=22)
              if(par==0 or par==1) :
                  pylab.xlabel('Prediction [$\mu$m]',fontsize=18)
              if(par==2 or par==3) :
@@ -1341,7 +1381,7 @@ if OUTPUT :
              if (par ==4) :
                  ##pylab.xlabel('prediction-target [1/GeV]',fontsize=18)
                  ## fixed to correct label
-                 pylab.xlabel('Prediction [1/GeV]',fontsize=18)
+                 pylab.xlabel('Prediction [GeV]',fontsize=18)
              pylab.ylabel('TCP',fontsize=18)
              plt.grid(True)
              if(RGB) :
@@ -1379,8 +1419,8 @@ if OUTPUT :
                     #plt.ylabel('y (prediction - target) [cm]')
                     
                     ## old scatter plot (target vs pred)
-                    plt.hist2d(bins_target,bins_pred,bins=450,range= [[-225,225], [-225, 225]], cmap=plt.cm.viridis) 
-                    l_y = [-225,225]
+                    plt.hist2d(bins_target,bins_pred,bins=300,range= [[-150,150], [-150, 150]], cmap=plt.cm.viridis) 
+                    l_y = [-150,150]
                     plt.plot(l_y, l_y, color='black') 
                     plt.ylabel('Predicted $\Delta y$ [$\mu$m]', fontsize=18)
                     plt.xlabel('Target $\Delta y$ [$\mu$m]', fontsize=18)
@@ -1436,16 +1476,16 @@ if OUTPUT :
                     ##plt.ylabel('$1/p_T$ (prediction - target) [1/GeV]', fontsize=18, labelpad=-5)
                   
                     ## old scatter plot (target vs pred)
-                    plt.hist2d(bins_target,bins_pred,bins=250,range= [[-0.05,0.2], [-0.05, 0.2]])
-                    l_pt = [-0.05, 0.2]
+                    plt.hist2d(bins_target,bins_pred,bins=250,range=[[-500,500], [-500, 500]])
+                    l_pt = [-500, 500]
                     l_zero = [0,0]
                     #plt.hist2d(bins_target,bins_pred,bins=200,range=[[-1000,1000], [-1000, 1000]])
                     #l_pt = [-1000, 1000]
                     plt.plot(l_pt, l_pt, color='black') 
                     plt.plot(l_zero, l_pt, color='black', linestyle='dashed') 
                     plt.plot(l_pt, l_zero, color='black', linestyle='dashed') 
-                    plt.ylabel('Predicted $1/p_T$ [1/GeV]', fontsize=18)
-                    plt.xlabel('Target $1/p_T$ [1/GeV]', fontsize=18)
+                    plt.ylabel('Predicted $p_T$ [GeV]', fontsize=18)
+                    plt.xlabel('Target $p_T$ [GeV]', fontsize=18)
                     plt.colorbar()
                  if(RGB) :
                      pylab.savefig("predVStarget_{jj}_{PAR}.pdf".format(PAR=par,jj=jetNum),bbox_inches='tight')#.png

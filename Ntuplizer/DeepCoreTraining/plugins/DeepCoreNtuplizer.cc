@@ -200,7 +200,7 @@ private:
   LocalPoint pixel2Local(int, int, const GeomDet*);
 
   // Pixel size fix:
- // std::pair<bool,bool> pixel2Size(int, int, const GeomDet*);
+  std::pair<bool,bool> pixel2Size(int, int, const GeomDet*);
   
   int pixelFlipper(const GeomDet*);
 
@@ -543,14 +543,13 @@ trackMap.clear();
   }
  
   // pixel size fix
-  /*
-    std::pair<bool,bool> DeepCoreNtuplizer::pixel2Local(int pixX, int pixY, const GeomDet* det){
-    bool pix_x_size=(dynamic_cast<const PixelGeomDetUnit*>(det))->specificTopology().localX(pixX);
-    bool pix_y_size=(dynamic_cast<const PixelGeomDetUnit*>(det))->specificTopology().localY(pixY);
+    std::pair<bool,bool> DeepCoreNtuplizer::pixel2Size(int pixX, int pixY, const GeomDet* det){
+    bool pix_x_size=(dynamic_cast<const PixelGeomDetUnit*>(det))->specificTopology().isItBigPixelInX(pixX);
+    bool pix_y_size=(dynamic_cast<const PixelGeomDetUnit*>(det))->specificTopology().isItBigPixelInY(pixY);
     std::pair<bool,bool> pix_xy_size(pix_x_size,pix_y_size);
     return pix_xy_size;
   }
-  */
+
   int DeepCoreNtuplizer::pixelFlipper(const GeomDet* det){
     int out =1;
     LocalVector locZdir(0,0,1);
@@ -672,12 +671,32 @@ trackMap.clear();
           }
           else info[0] = 0;
           
+        // pixel size fix 
+          std::pair<bool, bool> sz_xy = pixel2Size(x+pixJInter.first-jetDimX/2,y+pixJInter.second-jetDimY/2,det);
+          bool sz_x = sz_xy.first;
+          bool sz_y = sz_xy.second;
+          double pix_center_x;
+          double pix_center_y;
+
+          if (sz_x == 1){
+            pix_center_x = pitchX;
+          }else{
+            pix_center_x = 0.5*pitchX;
+          } 
+          if (sz_y == 1){
+            pix_center_y = pitchY;
+          }else{
+            pix_center_y = 0.5*pitchY;
+          }
+
           LocalPoint pix2loc = pixel2Local(x+pixJInter.first-jetDimX/2,y+pixJInter.second-jetDimY/2,det);
-          double distX =  localTrkInter.x()-pix2loc.x()-0.5*pitchX;//ADDED PITCH
-          double distY =  localTrkInter.y()-pix2loc.y()-0.5*pitchY;
-         // debug
-          std::cout << " dx = " << distX << " Track crossing ( " << localTrkInter.x() << ") - pixel location ( " << pix2loc.x() << " ) - 50 mu" << std::endl;
-          std::cout << " dy = " << distY << " Track crossing ( " << localTrkInter.y() << ") - pixel location ( " << pix2loc.y() << " ) - 75 mu" << std::endl;
+          double distX =  localTrkInter.x()-pix2loc.x()- pix_center_x; // pixel size fix
+          double distY =  localTrkInter.y()-pix2loc.y()- pix_center_y; // picel size fix
+         
+          // debug
+         // std::cout << " dx [cm]= " << distX << " Track crossing ( " << localTrkInter.x() << ") - pixel location ( " << pix2loc.x() << " ) - 0.005 " << std::endl;
+         // std::cout << " is x big? " << sz_xy.first << " is y big? " << sz_xy.second << std::endl;
+         // std::cout << " dy [cm]= " << distY << " Track crossing ( " << localTrkInter.y() << ") - pixel location ( " << pix2loc.y() << " ) - 0.0075 " << std::endl;
 
            if(distX<0.000001 && distX> -0.000001) {
              distX = 0.0;
@@ -694,7 +713,7 @@ trackMap.clear();
 
             info[4] = st.momentum().Eta()-jetDir.eta();
             info[5] = deltaPhi(st.momentum().Phi(),jetDir.phi());
-            info[7] = 1/st.momentum().Pt();
+            info[7] = st.momentum().Pt(); // 1/pt --> pt fix
           }
           else{
           if(info[0]== 1) {
