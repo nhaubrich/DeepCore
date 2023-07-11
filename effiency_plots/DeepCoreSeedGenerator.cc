@@ -72,21 +72,18 @@
 //
 // class declaration
 //
-struct DeepCoreCache {
-  const tensorflow::GraphDef* graph_def;
-};
 
-class DeepCoreSeedGenerator : public edm::stream::EDProducer<edm::GlobalCache<DeepCoreCache>> {
+class DeepCoreSeedGenerator : public edm::stream::EDProducer<edm::GlobalCache<tensorflow::SessionCache>> {
 public:
-  explicit DeepCoreSeedGenerator(const edm::ParameterSet&, const DeepCoreCache*);
+  explicit DeepCoreSeedGenerator(const edm::ParameterSet&, const tensorflow::SessionCache*);
   ~DeepCoreSeedGenerator() override;
 
   static void fillDescriptions(edm::ConfigurationDescriptions& descriptions);
   // A pointer to a cluster and a list of tracks on it
 
   // static methods for handling the global cache
-  static std::unique_ptr<DeepCoreCache> initializeGlobalCache(const edm::ParameterSet&);
-  static void globalEndJob(DeepCoreCache*);
+  static std::unique_ptr<tensorflow::SessionCache> initializeGlobalCache(const edm::ParameterSet&);
+  static void globalEndJob(tensorflow::SessionCache*);
 
   double jetPt_;
   double jetEta_;
@@ -97,6 +94,14 @@ public:
   static constexpr int Nlayer = 4;    //Number of layer used in DeepCore
   static constexpr int Nover = 3;     //Max number of tracks recorded per pixel
   static constexpr int Npar = 5;      //Number of track parameter
+
+  // DeepCore 2.1.2 thresholds delta
+  //double dth[3] = {0.0, 0.2375, 0.1875};
+  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  // DeepCore 2.1.3 thresholds delta 
+  double dth[3] = {0.0, 0.15, 0.3};
+  double dthl[3] = {0.1, 0.05, 0};
+
 
 private:
   void produce(edm::Event&, const edm::EventSetup&) override;
@@ -121,7 +126,7 @@ private:
   std::vector<std::string> inputTensorName_;
   std::vector<std::string> outputTensorName_;
   double probThr_;
-  tensorflow::Session* session_;
+  const tensorflow::Session* session_;
 
   std::pair<bool, Basic3DVector<float>> findIntersection(const GlobalVector&,
                                                          const reco::Candidate::Point&,
@@ -158,7 +163,7 @@ private:
       tensorflow::NamedTensorList, std::vector<std::string>);
 };
 
-DeepCoreSeedGenerator::DeepCoreSeedGenerator(const edm::ParameterSet& iConfig, const DeepCoreCache* cache)
+DeepCoreSeedGenerator::DeepCoreSeedGenerator(const edm::ParameterSet& iConfig, const tensorflow::SessionCache* cache)
     : vertices_(consumes<reco::VertexCollection>(iConfig.getParameter<edm::InputTag>("vertices"))),
       pixelClusters_(
           consumes<edmNew::DetSetVector<SiPixelCluster>>(iConfig.getParameter<edm::InputTag>("pixelClusters"))),
@@ -174,7 +179,7 @@ DeepCoreSeedGenerator::DeepCoreSeedGenerator(const edm::ParameterSet& iConfig, c
       inputTensorName_(iConfig.getParameter<std::vector<std::string>>("inputTensorName")),
       outputTensorName_(iConfig.getParameter<std::vector<std::string>>("outputTensorName")),
       probThr_(iConfig.getParameter<double>("probThr")),
-      session_(tensorflow::createSession(cache->graph_def))
+      session_(cache->getSession())
 
 {
   produces<TrajectorySeedCollection>();
@@ -213,10 +218,26 @@ void DeepCoreSeedGenerator::produce(edm::Event& iEvent, const edm::EventSetup& i
     if (jet.pt() > ptMin_) {
       std::set<unsigned long long int> ids;
       const reco::Vertex& jetVertex = vertices[0];
-
+     // DeepCore 1.0:
+      /*
       std::vector<GlobalVector> splitClustDirSet =
-          splittedClusterDirections(jet, tTopo, pixelCPE, jetVertex, 1, inputPixelClusters_);
+                  splittedClusterDirections(jet, tTopo, pixelCPE, jetVertex, 1, inputPixelClusters_);
       bool l2off = (splitClustDirSet.empty());
+
+      //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+      // DeepCore 2.1.3:
+      */
+      std::vector<GlobalVector> splitClustDirSet =
+          splittedClusterDirections(jet, tTopo, pixelCPE, jetVertex, 2, inputPixelClusters_);
+      bool l2off = (splitClustDirSet.empty());
+      splitClustDirSet = splittedClusterDirections(jet, tTopo, pixelCPE, jetVertex, 3, inputPixelClusters_);
+      bool l134off = (splitClustDirSet.empty());
+      splitClustDirSet = splittedClusterDirections(jet, tTopo, pixelCPE, jetVertex, 4, inputPixelClusters_);
+      l134off = (splitClustDirSet.empty() && l134off);
+      splitClustDirSet = splittedClusterDirections(jet, tTopo, pixelCPE, jetVertex, 1, inputPixelClusters_);
+      l134off = (splitClustDirSet.empty() && l134off);
+
+
       if (splitClustDirSet.empty()) {  //if layer 1 is broken find direcitons on layer 2
         splitClustDirSet = splittedClusterDirections(jet, tTopo, pixelCPE, jetVertex, 2, inputPixelClusters_);
       }
@@ -295,20 +316,15 @@ void DeepCoreSeedGenerator::produce(edm::Event& iEvent, const edm::EventSetup& i
         //here the NN produce the seed from the filled input
         std::pair<double[jetDimX][jetDimY][Nover][Npar], double[jetDimX][jetDimY][Nover]> seedParamNN =
             DeepCoreSeedGenerator::SeedEvaluation(input_tensors, output_names);
-        
+
         for (int i = 0; i < jetDimX; i++) {
           for (int j = 0; j < jetDimY; j++) {
             for (int o = 0; o < Nover; o++) {
-            // Printout to compare input/output prediction of pb file vs h5 file
-           // std::cout << "For pixel (" << i << ", " << j << "), track " << o << std::endl;
-            // printout for input tensor
-            // std::cout << "Input Tensor: normalized adc =" << input_tensors[2].second.tensor<float, 4>()(0, i, j, o) << "; eta = " << input_tensors[0].second.matrix<float>() << "; pt = " << input_tensors[1].second.matrix<float>() << "; " << std::endl;
-            // printout for prediction tensor
-            // std::cout << "Output Tensor: dx = " << seedParamNN.first[i][j][o][0] << " ; dy = " << seedParamNN.first[i][j][o][1] << " ; deta = " << seedParamNN.first[i][j][o][2] << "; dphi = " << seedParamNN.first[i][j][o][3] << "; pt = "<< 1/seedParamNN.first[i][j][o][4] << " ; pred = " << seedParamNN.second[i][j][o] << "; "<< std::endl;
-
-              // Adjusting delta threshold here
-              // if (seedParamNN.second[i][j][o] > (probThr_ - o * 0.1 - (l2off ? 0.35 : 0))) {
-              if (seedParamNN.second[i][j][o] > (probThr_ - o * 0.16 )) {
+            //    if (seedParamNN.second[i][j][o] > (probThr_ - o * 0.1 - (l2off ? 0.35 : 0))) {  // DeepCore 1.0   
+             // if (seedParamNN.second[i][j][o] > (probThr_ - o * 0.14)){ // DeepCore 2.1.1
+             // if (seedParamNN.second[i][j][o] > (probThr_ - dth[o])) {  // DeepCore 2.1.2
+                if (seedParamNN.second[i][j][o] > (probThr_ + dth[o] + (l2off ? 0.3 : 0) + (l134off ? dthl[o] : 0))) {  // DeepCore 2.1.3
+               ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
                 std::pair<bool, Basic3DVector<float>> interPair =
                     findIntersection(bigClustDir, (reco::Candidate::Point)jetVertex.position(), globDet);
                 auto localInter = globDet->specificSurface().toLocal((GlobalPoint)interPair.second);
@@ -541,15 +557,15 @@ std::vector<GlobalVector> DeepCoreSeedGenerator::splittedClusterDirections(
   return clustDirs;
 }
 
-std::unique_ptr<DeepCoreCache> DeepCoreSeedGenerator::initializeGlobalCache(const edm::ParameterSet& iConfig) {
-  // this method is supposed to create, initialize and return a DeepCoreCache instance
-  std::unique_ptr<DeepCoreCache> cache = std::make_unique<DeepCoreCache>();
+std::unique_ptr<tensorflow::SessionCache> DeepCoreSeedGenerator::initializeGlobalCache(
+    const edm::ParameterSet& iConfig) {
+  // this method is supposed to create, initialize and return a Tensorflow:SessionCache instance
   std::string graphPath = iConfig.getParameter<edm::FileInPath>("weightFile").fullPath();
-  cache->graph_def = tensorflow::loadGraphDef(graphPath);
+  std::unique_ptr<tensorflow::SessionCache> cache = std::make_unique<tensorflow::SessionCache>(graphPath);
   return cache;
 }
 
-void DeepCoreSeedGenerator::globalEndJob(DeepCoreCache* cache) { delete cache->graph_def; }
+void DeepCoreSeedGenerator::globalEndJob(tensorflow::SessionCache* cache) {}
 
 // ------------ method fills 'descriptions' with the allowed parameters for the module  ------------
 void DeepCoreSeedGenerator::fillDescriptions(edm::ConfigurationDescriptions& descriptions) {
@@ -564,13 +580,20 @@ void DeepCoreSeedGenerator::fillDescriptions(edm::ConfigurationDescriptions& des
   desc.add<std::string>("pixelCPE", "PixelCPEGeneric");
   desc.add<edm::FileInPath>(
       "weightFile",
-      // edm::FileInPath("/storage/local/data1/gpuscratch/hichemb/workflows/CMSSW_12_5_0_pre2/src/effiency_plots/DeepCoreSeedGenerator_TrainedModel_barrel_2017.pb"));
-     //  edm::FileInPath("/storage/local/data1/gpuscratch/hichemb/workflows/CMSSW_12_5_0_pre2/src/effiency_plots/DeepCoreSeedGenerator_TrainedModel_barrel_2022.pb"));
-      edm::FileInPath("/storage/local/data1/gpuscratch/hichemb/workflows/CMSSW_12_5_0_pre2/src/effiency_plots/DeepCore_model_0628.pb"));
-      //edm::FileInPath("/storage/local/data1/gpuscratch/hichemb/workflows/CMSSW_12_5_0_pre2/src/effiency_plots/Valerio_h5.pb"));
+     // edm::FileInPath("RecoTracker/TkSeedGenerator/data/DeepCore/Run2_h5.pb"));
+      // edm::FileInPath("RecoTracker/TkSeedGenerator/data/DeepCore/Run2_h5_fix.pb"));
+   //   edm::FileInPath("RecoTracker/TkSeedGenerator/data/DeepCore/DeepCore_model_1017.pb"));
+    // edm::FileInPath("RecoTracker/TkSeedGenerator/data/DeepCore/DeepCore_model_1017_fix.pb"));
+// DeepCore 1.0
+//     edm::FileInPath("RecoTracker/TkSeedGenerator/data/DeepCore/DeepCoreSeedGenerator_TrainedModel_barrel_2017.pb"));
+// DeepCore 2.1.3
+    edm::FileInPath("RecoTracker/TkSeedGenerator/data/DeepCore/DeepCore_model_23_0214.pb"));
   desc.add<std::vector<std::string>>("inputTensorName", {"input_1", "input_2", "input_3"});
   desc.add<std::vector<std::string>>("outputTensorName", {"output_node0", "output_node1"});
-  desc.add<double>("probThr", 0.36);
+//  desc.add<double>("probThr", 0.85); // DeepCore 1.0
+//  desc.add<double>("probThr", 0.32); // DeepCore 2.1.1
+//  desc.add<double>("probThr", 0.4875); // DeepCore 2.1.2
+  desc.add<double>("probThr", 0.7); // DeepCore 2.1.3
   descriptions.add("deepCoreSeedGenerator", desc);
 }
 

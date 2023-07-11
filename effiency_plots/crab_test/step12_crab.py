@@ -3,8 +3,8 @@ from WMCore.Configuration import Configuration
 config = Configuration()
 
 config.section_("General")
-config.General.requestName = 'DeepCore_11923_step12_1k'
-config.General.workArea = 'workflows_crab'
+config.General.requestName = 'DeepCore_12034_step12'
+config.General.workArea = 'workflows_crab_12034'
 config.General.transferOutputs = True
 config.General.transferLogs = True
 
@@ -13,16 +13,18 @@ config.JobType.pluginName = 'PrivateMC'
 config.JobType.psetName = 'cmsDriver_step12.py'
 config.JobType.allowUndistributedCMSSW = True
 config.JobType.numCores=8
-config.JobType.maxMemoryMB=15000
+config.JobType.maxMemoryMB=20000
 
 config.section_("Data")
-config.Data.outputPrimaryDataset = 'DeepCore_11923_step12_1k'
+config.Data.outputPrimaryDataset = 'DeepCore_12034_step12'
 config.Data.splitting = 'EventBased'
-config.Data.unitsPerJob = 100
-NJOBS = 10 # This is not a configuration parameter, but an auxiliary variable that we use in the next line.
+config.Data.unitsPerJob = 100 #QCD
+#config.Data.unitsPerJob = 200 #TTbar
+NJOBS = 10 #QCD
+#NJOBS = 50 #TTbar
 config.Data.totalUnits = config.Data.unitsPerJob * NJOBS
 config.Data.publication = True
-config.Data.outputDatasetTag = 'DeepCore_11923_step12_1k'
+config.Data.outputDatasetTag = 'DeepCore_12034_step12'
 
 config.section_("Site")
 

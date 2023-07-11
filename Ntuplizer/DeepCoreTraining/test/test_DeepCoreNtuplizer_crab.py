@@ -1,36 +1,31 @@
 from CRABClient.UserUtilities import config,getUsernameFromCRIC
 config = config()
 
-config.General.requestName = 'DeepCoreNtuplizer'
+config.General.requestName = 'DeepCoreNtuplizer_pt_fix'
 config.General.workArea = 'crab_projects'
 config.General.transferOutputs = True
 config.General.transferLogs = True
 
 config.JobType.pluginName = 'Analysis'
-##config.JobType.psetName = 'NNClustSeedInputSimHit_config.py'
 config.JobType.psetName = 'test_DeepCoreNtuplizer.py' ## correct python file
 config.JobType.numCores=8
 config.JobType.maxMemoryMB=20000
 
-## config.Data.inputDataset = '/QCD_Pt_1800to2400_TuneCUETP8M1_13TeV_pythia8/arizzi-TrainJetCoreAll-ddeeece6d9d1848c03a48f0aa2e12852/USER' #barrel input
 ## config.Data.inputDataset = '/store/user/hichemb/RelValQCD_Pt_1800_2400_14/DeepCoreNtuplizerInput/211013_194728/0000/output'
-#config.Data.inputDataset = '/RelValQCD_Pt_1800_2400_14/hboucham-DeepCoreNtuplizerInput-6d87375326d3f4c3992ae44982f1a1bf/USER'
-config.Data.inputDataset = '/RelValQCD_Pt_1800_2400_14/hboucham-DeepCoreNtuplizerInput-e2166fcccba2bba0572671bbca4b6777/USER'
-#config.Data.inputDataset = '/RelValQCD_Pt_1800_2400_14/hboucham-DeepCoreNtuplizerInput-6d87375326d3f4c3992ae44982f1a1bf/USER'
 ## config.Data.userInputFiles = ['/eos/uscms/store/user/hichemb/RelValQCD_Pt_1800_2400_14/DeepCoreNtuplizerInput/211013_194728/0000/Ntuplizer_output1.root']
-## config.Data.userInputFiles = ['/eos/uscms/store/user/hichemb/RelValQCD_Pt_1800_2400_14/DeepCoreNtuplizerInput/211013_194728/0000/Ntuplizer_output1.root']
-# config.Data.inputDataset = '/UBGGun_E-1000to7000_Eta-1p2to2p1_13TeV_pythia8/vbertacc-DeepCoreTrainingSampleEC_all-3b4718db5896f716d6af32b678bbc9f2/USER' #endcap input
+config.Data.inputDataset = '/RelValQCD_Pt_1800_2400_14/hboucham-DeepCoreNtuplizerInput-e101c270c65c32f52437c2373244ff6e/USER'
 config.Data.inputDBS = 'phys03' ##'phys03' ## might need to change to global?
-config.Data.splitting = 'EventAwareLumiBased'
-config.Data.unitsPerJob = 1000
-NJOBS = 3
-config.Data.totalUnits = config.Data.unitsPerJob * NJOBS
 
-#config.Data.outLFNDirBase = '/store/user/%s/DeepCoreTrainingSample' % (getUsernameFromCRIC())
+## If using Lumi based split
+#config.Data.splitting = 'EventAwareLumiBased'
+#config.Data.unitsPerJob = 5000
+#NJOBS = 380
+#config.Data.totalUnits = config.Data.unitsPerJob * NJOBS
 
-config.Data.publication = True
-config.Data.outputDatasetTag = 'DeepCoreTrainingSample'
-##config.Data.totalUnits = config.Data.unitsPerJob*10000
+## If using File based split
+config.Data.splitting = 'FileBased'
+config.Data.unitsPerJob = 1
 
-#config.Site.storageSite = "T2_IT_Pisa
+config.Data.publication = False
+config.Data.outputDatasetTag = 'DeepCoreTrainingSample_pt_fix'
 config.Site.storageSite = "T3_US_FNALLPC"
