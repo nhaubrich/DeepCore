@@ -323,7 +323,7 @@ void DeepCoreSeedGenerator::produce(edm::Event& iEvent, const edm::EventSetup& i
             //    if (seedParamNN.second[i][j][o] > (probThr_ - o * 0.1 - (l2off ? 0.35 : 0))) {  // DeepCore 1.0   
              // if (seedParamNN.second[i][j][o] > (probThr_ - o * 0.14)){ // DeepCore 2.1.1
              // if (seedParamNN.second[i][j][o] > (probThr_ - dth[o])) {  // DeepCore 2.1.2
-                if (seedParamNN.second[i][j][o] > (probThr_ + dth[o] + (l2off ? 0.3 : 0) + (l134off ? dthl[o] : 0))) {  // DeepCore 2.1.3
+                if (seedParamNN.second[i][j][o] > (probThr_ + dth[o] + (l2off ? 0.3 : 0) + (l134off ? dthl[o] : 0))) {  // DeepCore 2.1.3 and 2.2.1
                ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
                 std::pair<bool, Basic3DVector<float>> interPair =
                     findIntersection(bigClustDir, (reco::Candidate::Point)jetVertex.position(), globDet);
@@ -347,8 +347,10 @@ void DeepCoreSeedGenerator::produce(edm::Event& iEvent, const edm::EventSetup& i
                 double track_theta = 2 * std::atan(std::exp(-track_eta));
                 double track_phi =
                     seedParamNN.first[i][j][o][3] * 0.01 + bigClustDir.phi();  //pay attention to this 0.01
-
-                double pt = 1. / seedParamNN.first[i][j][o][4];
+                // DeepCore 2.1.3 and earlier use 1/pt instead of pt
+                // double pt = 1. / seedParamNN.first[i][j][o][4];
+                // DeepCore 2.2 and later
+                double pt = seedParamNN.first[i][j][o][4];
                 double normdirR = pt / sin(track_theta);
 
                 const GlobalVector globSeedDir(
@@ -580,20 +582,18 @@ void DeepCoreSeedGenerator::fillDescriptions(edm::ConfigurationDescriptions& des
   desc.add<std::string>("pixelCPE", "PixelCPEGeneric");
   desc.add<edm::FileInPath>(
       "weightFile",
-     // edm::FileInPath("RecoTracker/TkSeedGenerator/data/DeepCore/Run2_h5.pb"));
-      // edm::FileInPath("RecoTracker/TkSeedGenerator/data/DeepCore/Run2_h5_fix.pb"));
-   //   edm::FileInPath("RecoTracker/TkSeedGenerator/data/DeepCore/DeepCore_model_1017.pb"));
-    // edm::FileInPath("RecoTracker/TkSeedGenerator/data/DeepCore/DeepCore_model_1017_fix.pb"));
 // DeepCore 1.0
-//     edm::FileInPath("RecoTracker/TkSeedGenerator/data/DeepCore/DeepCoreSeedGenerator_TrainedModel_barrel_2017.pb"));
-// DeepCore 2.1.3
-    edm::FileInPath("RecoTracker/TkSeedGenerator/data/DeepCore/DeepCore_model_23_0214.pb"));
+//    edm::FileInPath("RecoTracker/TkSeedGenerator/data/DeepCore/DeepCore_model_1.0.pb"));
+// DeepCore 2.1
+ //   edm::FileInPath("RecoTracker/TkSeedGenerator/data/DeepCore/DeepCore_model_2.1.pb"));
+// DeepCore 2.2
+    edm::FileInPath("RecoTracker/TkSeedGenerator/data/DeepCore/DeepCore_model_2.2.pb"));
   desc.add<std::vector<std::string>>("inputTensorName", {"input_1", "input_2", "input_3"});
   desc.add<std::vector<std::string>>("outputTensorName", {"output_node0", "output_node1"});
 //  desc.add<double>("probThr", 0.85); // DeepCore 1.0
 //  desc.add<double>("probThr", 0.32); // DeepCore 2.1.1
 //  desc.add<double>("probThr", 0.4875); // DeepCore 2.1.2
-  desc.add<double>("probThr", 0.7); // DeepCore 2.1.3
+  desc.add<double>("probThr", 0.7); // DeepCore 2.1.3 and 2.2.1
   descriptions.add("deepCoreSeedGenerator", desc);
 }
 
