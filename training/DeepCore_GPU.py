@@ -1,11 +1,12 @@
 from __future__ import print_function
 import os
-os.environ['MKL_NUM_THREADS'] = '40'
-os.environ['GOTO_NUM_THREADS'] = '40'
-os.environ['OMP_NUM_THREADS'] = '40'
-os.environ['openmp'] = 'True'
+#os.environ['MKL_NUM_THREADS'] = '40'
+#os.environ['GOTO_NUM_THREADS'] = '40'
+#os.environ['OMP_NUM_THREADS'] = '40'
+#os.environ['openmp'] = 'True'
 
 import tensorflow as tf
+
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import clip_ops
 from tensorflow.python.ops import math_ops
@@ -26,7 +27,6 @@ from keras.optimizers import *
 from keras.initializers import *
 from keras.callbacks import ModelCheckpoint
 
-import pandas as pd
 import numpy as np
 from numpy import concatenate as concatenatenp
 
@@ -42,6 +42,9 @@ import glob
 
 import uproot3
 import uproot
+import time
+import h5py
+
 gpus = tf.config.experimental.list_physical_devices('GPU')
 tf.config.experimental.set_memory_growth(gpus[0], True)
 
@@ -405,6 +408,71 @@ def Generator2(filepath,batch_size=0,count=False):
             break
 
 
+class HDF5Generator:
+    def __init__(self,fname,batchsize):
+        self.fname=fname
+        self.batchsize=batchsize
+    def __call__(self):
+        with h5py.File(self.fname,'r',libver='latest') as f:
+            batchsize=self.batchsize
+            nbatches = int(f['jet_eta'].shape[0]/batchsize)
+            indices=np.arange(nbatches)
+            print("Initialize HDF5 Generator")
+            while True:
+                np.random.shuffle(indices)
+                for index in indices:
+                    ind=index*batch_size
+                    batch=((f["cluster_measured"][ind:ind+batchsize],f["jet_eta"][ind:ind+batchsize],f['jet_pt'][ind:ind+batchsize]),(f['trackPar'][ind:ind+batchsize],f['trackProb'][ind:ind+batchsize]))
+
+                    for i in range(batchsize):
+                        #yield ((f["cluster_measured"][i],f["jet_eta"][i],f['jet_pt'][i]),(f['trackPar'][i],f['trackProb'][i]))
+                        yield ((batch[0][0][i],batch[0][1][i],batch[0][2][i]),(batch[1][0][i],batch[1][1][i]))
+    def nbatches(self):
+        with h5py.File(self.fname,'r') as f:
+            nbatches = int(f['jet_eta'].shape[0]/self.batchsize)
+            return nbatches
+    def nrows(self):
+        with h5py.File(self.fname,'r') as f:
+            nbatches = f['jet_eta'].shape[0]
+            return nbatches
+
+class HDF5GeneratorN:
+    #yield from subset i/N (for interleave)
+    def __init__(self,fname,batchsize,N):
+        self.fname=fname
+        self.batchsize=batchsize
+        self.N=N #tot number of generators
+    def __call__(self,i):
+        self.i=i #generator index
+        self.n_batch = self.nbatches()
+        self.i_batch= int(self.n_batch*i/self.N)
+        self.f_batch= int(self.n_batch*(i+1)/self.N)
+        with h5py.File(self.fname,'r',libver='latest') as f:
+            batchsize=self.batchsize
+            indices=np.arange(self.i_batch,self.f_batch)
+            print("Initialize HDF5 Generator")
+            while True:
+                np.random.shuffle(indices)
+                for index in indices:
+                    ind=index*batch_size
+                    batch=((f["cluster_measured"][ind:ind+batchsize],f["jet_eta"][ind:ind+batchsize],f['jet_pt'][ind:ind+batchsize]),(f['trackPar'][ind:ind+batchsize],f['trackProb'][ind:ind+batchsize]))
+
+                    for i in range(batchsize):
+                        yield ((batch[0][0][i],batch[0][1][i],batch[0][2][i]),(batch[1][0][i],batch[1][1][i]))
+                        #a,b,c,d,e = ((batch[0][0][i],batch[0][1][i],batch[0][2][i]),(batch[1][0][i],batch[1][1][i]))
+                        #a.reshape(-1,30,30,4)
+                        #b.reshape(-1)
+                        #c.reshape(-1)
+                        #d.reshape(-1,30,30,3,6)
+                        #e.reshape(-1,30,30,3,2)
+                        #yield a,b,c,d,e
+    def nbatches(self):
+        with h5py.File(self.fname,'r') as f:
+            nbatches = int(f['jet_eta'].shape[0]/self.batchsize)
+            return nbatches
+    def nrows(self):
+        with h5py.File(self.fname,'r') as f:
+            return f['jet_eta'].shape[0]
 
 
 # linear propagation to the 4 barrel layers, with plotting purpose only
@@ -598,9 +666,9 @@ else :  #loaded the central input
     #files=glob.glob('/storage/local/data1/gpuscratch/hichemb/Training0217/TrainingSamples/training/DeepCoreTrainingSample*.root')
     #files_validation=glob.glob('/storage/local/data1/gpuscratch/hichemb/Training0217/TrainingSamples/validation/DeepCoreTrainingSample*.root')
     #Generator2 approach
-    trainingpath = "/storage/local/data1/gpuscratch/hichemb/DeepCore_git/DeepCore_Training/TrainingSamples/training/DeepCoreTrainingSample_*.root"
-    validationpath = "/storage/local/data1/gpuscratch/hichemb/DeepCore_git/DeepCore_Training/TrainingSamples/validation/DeepCoreTrainingSample_*.root"
-    
+    trainingpath = "/storage/local/data1/gpuscratch/njh/DeepCore_data/DeepCore_Training/TrainingSamples/training/DeepCoreTrainingSample_*.root"
+    validationpath = "/storage/local/data1/gpuscratch/njh/DeepCore_data/DeepCore_Training/TrainingSamples/validation/DeepCoreTrainingSample_*.root"
+    #validationpath = "/storage/local/data1/gpuscratch/hichemb/DeepCore_git/DeepCore_Training/TrainingSamples/validation/DeepCoreTrainingSample_*.root"
     #GPU3 training/validation files
     #trainingpath = "/storage/local/data1/gpuscratch/njh/Training0217/training/DeepCoreTrainingSample_*.root:DeepCoreNtuplizerTest/DeepCoreNtuplizerTree;"
     #validationpath = "/storage/local/data1/gpuscratch/njh/Training0217/validation/DeepCoreTrainingSample_*.root:DeepCoreNtuplizerTest/DeepCoreNtuplizerTree;"
@@ -712,45 +780,76 @@ if TRAIN or PREDICT :
 #    conv1_3_1 = Conv2D(6,3, data_format="channels_last", activation='sigmoid', padding="same")(conv1_3_3)
 #    reshaped_prob = Reshape((jetDim,jetDim,overlapNum,2))(conv1_3_1)
 #######################################################################################################################
+    #model='mixed_precision'
+    model='baseline'
+    if model=='baseline':
+     # DeepCore 2.2 Architecture
+        conv30_9 = Conv2D(50,7, data_format="channels_last", input_shape=(jetDim,jetDim,layNum+2), activation='relu',padding="same")(ComplInput)
+        conv30_7 = Conv2D(40,5, data_format="channels_last", activation='relu',padding="same")(conv30_9)
+        conv30_5 = Conv2D(40,5, data_format="channels_last", activation='relu',padding="same")(conv30_7)#
+        conv20_5 = Conv2D(30,5, data_format="channels_last", activation='relu',padding="same")(conv30_5)
+        conv15_5 = Conv2D(30,3, data_format="channels_last", activation='relu',padding="same")(conv20_5)
 
- # DeepCore 2.2 Architecture
-    conv30_9 = Conv2D(50,7, data_format="channels_last", input_shape=(jetDim,jetDim,layNum+2), activation='relu',padding="same")(ComplInput)
-    conv30_7 = Conv2D(40,5, data_format="channels_last", activation='relu',padding="same")(conv30_9)
-    conv30_5 = Conv2D(40,5, data_format="channels_last", activation='relu',padding="same")(conv30_7)#
-    conv20_5 = Conv2D(30,5, data_format="channels_last", activation='relu',padding="same")(conv30_5)
-    conv15_5 = Conv2D(30,3, data_format="channels_last", activation='relu',padding="same")(conv20_5)
+        conv15_3_1 = Conv2D(18,3, data_format="channels_last",activation='relu', padding="same")(conv15_5)
+        conv15_3_2 = Conv2D(18,3, data_format="channels_last",activation='relu', padding="same")(conv15_3_1)
+        conv15_3_3 = Conv2D(18,3, data_format="channels_last",activation='relu', padding="same")(conv15_3_2) #(12,3)
+        conv15_3 = Conv2D(18,3, data_format="channels_last",padding="same")(conv15_3_3) #(12,3)
+        reshaped = Reshape((jetDim,jetDim,overlapNum,parNum+1))(conv15_3)
 
-    conv15_3_1 = Conv2D(18,3, data_format="channels_last",activation='relu', padding="same")(conv15_5)
-    conv15_3_2 = Conv2D(18,3, data_format="channels_last",activation='relu', padding="same")(conv15_3_1)
-    conv15_3_3 = Conv2D(18,3, data_format="channels_last",activation='relu', padding="same")(conv15_3_2) #(12,3)
-    conv15_3 = Conv2D(18,3, data_format="channels_last",padding="same")(conv15_3_3) #(12,3)
-    reshaped = Reshape((jetDim,jetDim,overlapNum,parNum+1))(conv15_3)
+        conv12_3_1 = Conv2D(30,3, data_format="channels_last", activation='relu', padding="same")(conv15_5)  #new
+        conv1_3_2 = Conv2D(30,3, data_format="channels_last", activation='relu', padding="same")(conv12_3_1) #drop7lb   #new
+        conv1_3_3 = Conv2D(30,3, data_format="channels_last", activation='relu',padding="same")(conv1_3_2) #new
+        conv1_3_1 = Conv2D(6,3, data_format="channels_last", activation='sigmoid', padding="same")(conv1_3_3)
+        reshaped_prob = Reshape((jetDim,jetDim,overlapNum,2))(conv1_3_1)
+    #######################################################################################################################
+        model = Model([NNinputs,NNinputs_jeta,NNinputs_jpt],[reshaped,reshaped_prob])
+        
+        # Made it easier to adjust learning rate
+        #anubi = keras.optimizers.Adam(learning_rate=0.00001)#after epochs 252 (with septs/20 and batch_size 64)
+        #Learning rate adjustments:
+        # anubi = keras.optimizers.Adam(learning_rate=0.01)  #10-2
+        #anubi = keras.optimizers.Adam(learning_rate=0.001)  #10-3
+        #anubi = keras.optimizers.Adam(learning_rate=0.0001)  #10-4
+        #anubi = keras.optimizers.Adam(learning_rate=0.00001)  #10-5
+        anubi = keras.optimizers.Adam(learning_rate=0.000001)  #10-6
+        # anubi = keras.optimizers.Adam(learning_rate=0.0000001)  #10-7
+        # anubi = keras.optimizers.Adam(learning_rate=0.00000001)  #10-8
+        
+        # Loss function adjustments:
+        # ROI
+        #model.compile(optimizer=anubi, loss=[loss_mse_select_clipped,loss_ROI_crossentropy], loss_weights=[1,1]) #FOR EARLY TRAINING
+        # ROIsoft
+        model.compile(optimizer=anubi, loss=[loss_mse_select_clipped,loss_ROIsoft_crossentropy], loss_weights=[1,1]) #FOR LATE TRAINING
 
-    conv12_3_1 = Conv2D(30,3, data_format="channels_last", activation='relu', padding="same")(conv15_5)  #new
-    conv1_3_2 = Conv2D(30,3, data_format="channels_last", activation='relu', padding="same")(conv12_3_1) #drop7lb   #new
-    conv1_3_3 = Conv2D(30,3, data_format="channels_last", activation='relu',padding="same")(conv1_3_2) #new
-    conv1_3_1 = Conv2D(6,3, data_format="channels_last", activation='sigmoid', padding="same")(conv1_3_3)
-    reshaped_prob = Reshape((jetDim,jetDim,overlapNum,2))(conv1_3_1)
-#######################################################################################################################
-    model = Model([NNinputs,NNinputs_jeta,NNinputs_jpt],[reshaped,reshaped_prob])
-    
-    # Made it easier to adjust learning rate
-    #anubi = keras.optimizers.Adam(learning_rate=0.00001)#after epochs 252 (with septs/20 and batch_size 64)
-    #Learning rate adjustments:
-    # anubi = keras.optimizers.Adam(learning_rate=0.01)  #10-2
-    #anubi = keras.optimizers.Adam(learning_rate=0.001)  #10-3
-    #anubi = keras.optimizers.Adam(learning_rate=0.0001)  #10-4
-    #anubi = keras.optimizers.Adam(learning_rate=0.00001)  #10-5
-    anubi = keras.optimizers.Adam(learning_rate=0.000001)  #10-6
-    # anubi = keras.optimizers.Adam(learning_rate=0.0000001)  #10-7
-    # anubi = keras.optimizers.Adam(learning_rate=0.00000001)  #10-8
-    
-    # Loss function adjustments:
-    # ROI
-    #model.compile(optimizer=anubi, loss=[loss_mse_select_clipped,loss_ROI_crossentropy], loss_weights=[1,1]) #FOR EARLY TRAINING
-    # ROIsoft
-    model.compile(optimizer=anubi, loss=[loss_mse_select_clipped,loss_ROIsoft_crossentropy], loss_weights=[1,1]) #FOR LATE TRAINING
-    
+    if model=='mixed_precision':
+        
+        policy = tf.keras.mixed_precision.Policy('mixed_float16')
+        tf.keras.mixed_precision.set_global_policy(policy)
+
+        conv30_9 = Conv2D(50,7, data_format="channels_last", input_shape=(jetDim,jetDim,layNum+2), activation='relu',padding="same")(ComplInput)
+        conv30_7 = Conv2D(40,5, data_format="channels_last", activation='relu',padding="same")(conv30_9)
+        conv30_5 = Conv2D(40,5, data_format="channels_last", activation='relu',padding="same")(conv30_7)#
+        conv20_5 = Conv2D(30,5, data_format="channels_last", activation='relu',padding="same")(conv30_5)
+        conv15_5 = Conv2D(30,3, data_format="channels_last", activation='relu',padding="same")(conv20_5)
+
+        conv15_3_1 = Conv2D(18,3, data_format="channels_last",activation='relu', padding="same")(conv15_5)
+        conv15_3_2 = Conv2D(18,3, data_format="channels_last",activation='relu', padding="same")(conv15_3_1)
+        conv15_3_3 = Conv2D(18,3, data_format="channels_last",activation='relu', padding="same")(conv15_3_2) #(12,3)
+        conv15_3 = Conv2D(18,3, data_format="channels_last",padding="same",dtype='float32')(conv15_3_3) #(12,3)
+        reshaped = Reshape((jetDim,jetDim,overlapNum,parNum+1),dtype='float32')(conv15_3)
+
+        conv12_3_1 = Conv2D(30,3, data_format="channels_last", activation='relu', padding="same")(conv15_5)  #new
+        conv1_3_2 = Conv2D(30,3, data_format="channels_last", activation='relu', padding="same")(conv12_3_1) #drop7lb   #new
+        conv1_3_3 = Conv2D(30,3, data_format="channels_last", activation='relu',padding="same")(conv1_3_2) #new
+        conv1_3_1 = Conv2D(6,3, data_format="channels_last", activation='sigmoid', padding="same",dtype='float32')(conv1_3_3)
+        reshaped_prob = Reshape((jetDim,jetDim,overlapNum,2),dtype='float32')(conv1_3_1)
+        
+        model = Model([NNinputs,NNinputs_jeta,NNinputs_jpt],[reshaped,reshaped_prob])
+        
+        anubi = keras.optimizers.Adam(learning_rate=0.000001)  #10-6
+        model.compile(optimizer=anubi, loss=[loss_mse_select_clipped,loss_ROIsoft_crossentropy], loss_weights=[1,1])
+
+
     model.summary()
 
 
@@ -763,22 +862,22 @@ if TRAIN or PREDICT :
 #evaluation of number of events used 
 tot_events = 0
 tot_events_validation = 0
-if(LOCAL_INPUT) :
-    tfile = uproot3.open(input_name)
-    tree = tfile[inputModuleName][inputTreeName]
-    input_jeta2 = tree.array("jet_eta")
-    tot_events = len(input_jeta2)
-    tot_events_validation=tot_events*valSplit
-    tot_events=tot_events*(1-valSplit)
-else :
-    print("number of  file=", len(glob.glob(trainingpath)))
-    print("number of file validation=", len(glob.glob(validationpath)))
-    for batch in Generator2(trainingpath,count=True):
-        #pdb.set_trace()
-        tot_events += batch
-
-    for batch in Generator2(validationpath,count=True):
-        tot_events_validation += batch
+#if(LOCAL_INPUT) :
+#    tfile = uproot3.open(input_name)
+#    tree = tfile[inputModuleName][inputTreeName]
+#    input_jeta2 = tree.array("jet_eta")
+#    tot_events = len(input_jeta2)
+#    tot_events_validation=tot_events*valSplit
+#    tot_events=tot_events*(1-valSplit)
+#else :
+#    print("number of  file=", len(glob.glob(trainingpath)))
+#    print("number of file validation=", len(glob.glob(validationpath)))
+#    for batch in Generator2(trainingpath,count=True):
+#        #pdb.set_trace()
+#        tot_events += batch
+#
+#    for batch in Generator2(validationpath,count=True):
+#        tot_events_validation += batch
 
 
 jetNum = tot_events
@@ -821,14 +920,53 @@ if TRAIN :
         else :
             history  = model.fit([input_,input_jeta,input_jpt], [target_,target_prob],  batch_size=batch_size, epochs=epochs+start_epoch, verbose = 2, validation_split=valSplit,  initial_epoch=start_epoch, callbacks=[checkpointer])            
     else : #full standard training
-        ## chaning steps_per_epoch=stepNum/20 to steps_per_epoch=stepNum
         #history = model.fit_generator(generator=Generator(files),steps_per_epoch=stepNum, epochs=epochs+start_epoch, verbose = 2, max_queue_size=1, validation_data=Generator(files_validation),  validation_steps=jetNum_validation/batch_
         
         ## Adjust step size between trainings: if step size = 1/20 then inverse_step_size = 20
         inverse_step_size = 1
         val_inverse_step_size = 1
+            
+        #HDF5 parallel
+        trainfile="/storage/local/data1/gpuscratch/njh/DeepCore_data/DeepCore_Training/train.hdf5"
+        valfile="/storage/local/data1/gpuscratch/njh/DeepCore_data/DeepCore_Training/val.hdf5"
+        precision=np.float16
+        
+        #use four copies of generator and interleave
+        N=4
+        trainGenN = HDF5GeneratorN(trainfile,batch_size*4,N)
+        trainSteps=int(trainGenN.nrows()/batch_size)
 
-        history = model.fit(Generator2(trainingpath,batch_size),steps_per_epoch=int(stepNum/inverse_step_size),epochs=start_epoch+args.Epochs,verbose=2,max_queue_size=1,validation_data=Generator2(validationpath,batch_size),validation_steps=int(jetNum_validation/(val_inverse_step_size*batch_size)), initial_epoch=start_epoch, callbacks=[checkpointer])
+        hdfTrain = tf.data.Dataset.range(N).interleave(
+            lambda i: tf.data.Dataset.from_generator(
+                trainGenN, args=(i,),
+                output_signature=( (tf.TensorSpec(shape=(jetDim,jetDim,layNum), dtype=precision),
+                    tf.TensorSpec(shape=(), dtype=precision),
+                    tf.TensorSpec(shape=(), dtype=precision)),
+                    (tf.TensorSpec(shape=(jetDim,jetDim,overlapNum,parNum+1), dtype=precision),
+                    tf.TensorSpec(shape=(jetDim,jetDim,overlapNum,2), dtype=precision))
+                )
+            ), cycle_length=N, num_parallel_calls=4, deterministic=False #dangerous?
+        ).batch(batch_size).apply(tf.data.experimental.copy_to_device("/gpu:0")).prefetch(tf.data.AUTOTUNE)
+        
+        valGenN = HDF5GeneratorN(valfile,batch_size*4,N)
+        hdfVal = tf.data.Dataset.range(N).interleave(
+            lambda i: tf.data.Dataset.from_generator(
+                valGenN, args=(i,),
+                output_signature=( (tf.TensorSpec(shape=(jetDim,jetDim,layNum), dtype=precision),
+                    tf.TensorSpec(shape=(), dtype=precision),
+                    tf.TensorSpec(shape=(), dtype=precision)),
+                    (tf.TensorSpec(shape=(jetDim,jetDim,overlapNum,parNum+1), dtype=precision),
+                    tf.TensorSpec(shape=(jetDim,jetDim,overlapNum,2), dtype=precision))
+                )
+            ), cycle_length=N, num_parallel_calls=4, deterministic=False
+        ).batch(batch_size).apply(tf.data.experimental.copy_to_device("/gpu:0")).prefetch(tf.data.AUTOTUNE)
+        valSteps=int(valGenN.nrows()/batch_size)
+
+        start_time=time.time() 
+        history = model.fit(hdfTrain,steps_per_epoch=trainSteps,epochs=start_epoch+args.Epochs,validation_data=hdfVal,validation_steps=valSteps, initial_epoch=start_epoch, callbacks=[checkpointer],verbose=2)
+        stop_time=time.time() 
+        
+        print("Duration: {:.2f}".format(stop_time-start_time))
         print("done running; now save")
         
     model.save_weights('DeepCore_train_ev{ev}_ep{ep}.h5'.format(ev=jetNum, ep=epochs+start_epoch))
