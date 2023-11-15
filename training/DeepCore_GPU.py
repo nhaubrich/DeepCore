@@ -40,8 +40,8 @@ from  matplotlib import pyplot as plt
 import pylab
 import glob
 
-import uproot3
-import uproot
+#import uproot3
+#import uproot
 import time
 import h5py
 
