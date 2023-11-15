@@ -654,8 +654,10 @@ else :  #loaded the central input
     #---------------- central input  ----------------#
 
     #HDF5
-    trainfile="/storage/local/data1/gpuscratch/njh/DeepCore_data/DeepCore_Training/train.hdf5"
-    valfile="/storage/local/data1/gpuscratch/njh/DeepCore_data/DeepCore_Training/val.hdf5"
+    trainfile="/content/data/train.hdf5"
+    valfile="/content/data/val.hdf5"
+    #trainfile="/storage/local/data1/gpuscratch/njh/DeepCore_data/DeepCore_Training/train.hdf5"
+    #valfile="/storage/local/data1/gpuscratch/njh/DeepCore_data/DeepCore_Training/val.hdf5"
 
     #barrel full stat
     ## files=glob.glob('/gpfs/ddn/srm/cms/store/user/vbertacc/NNClustSeedInputSimHit/QCD_Pt_1800to2400_TuneCUETP8M1_13TeV_pythia8//NNClustSeedInputSimHit_1LayClustPt_cutPt/190216_214452/0000/ntuple*.root') + glob.glob('/gpfs/ddn/srm/cm
