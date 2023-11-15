@@ -898,8 +898,6 @@ if TRAIN :
         val_inverse_step_size=1
             
         #HDF5 parallel
-        trainfile="/storage/local/data1/gpuscratch/njh/DeepCore_data/DeepCore_Training/train.hdf5"
-        valfile="/storage/local/data1/gpuscratch/njh/DeepCore_data/DeepCore_Training/val.hdf5"
         precision=np.float16
         
         #use four copies of generator and interleave
@@ -929,12 +927,16 @@ if TRAIN :
                     (tf.TensorSpec(shape=(jetDim,jetDim,overlapNum,parNum+1), dtype=precision),
                     tf.TensorSpec(shape=(jetDim,jetDim,overlapNum,2), dtype=precision))
                 )
-            ), cycle_length=N, num_parallel_calls=4, deterministic=False
+            ), cycle_length=N, num_parallel_calls=N, deterministic=False
         ).batch(batch_size).apply(tf.data.experimental.copy_to_device("/gpu:0")).prefetch(tf.data.AUTOTUNE)
         valSteps=int(valGenN.nrows()/batch_size)
 
+        trainSteps=1000
+        valSteps=1
+        logdir = "logs/"
+        tensorboard_callback = tf.keras.callbacks.TensorBoard(logdir,histogram_freq=1,profile_batch='500,550')
         start_time=time.time() 
-        history = model.fit(hdfTrain,steps_per_epoch=trainSteps,epochs=start_epoch+args.Epochs,validation_data=hdfVal,validation_steps=valSteps, initial_epoch=start_epoch, callbacks=[checkpointer],verbose=2)
+        history = model.fit(hdfTrain,steps_per_epoch=trainSteps,epochs=start_epoch+args.Epochs,validation_data=hdfVal,validation_steps=valSteps, initial_epoch=start_epoch, callbacks=[tensorboard_callback],verbose=2)
         stop_time=time.time() 
         
         print("Duration: {:.2f}".format(stop_time-start_time))
