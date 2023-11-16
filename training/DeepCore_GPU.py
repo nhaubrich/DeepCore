@@ -11,7 +11,6 @@ from tensorflow.python.framework import ops
 from tensorflow.python.ops import clip_ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import nn
-##import pdb ## for debug stuff
 
 ##
 keras = tf.keras
@@ -408,64 +407,33 @@ def Generator2(filepath,batch_size=0,count=False):
             break
 
 
-class HDF5Generator:
-    def __init__(self,fname,batchsize):
-        self.fname=fname
-        self.batchsize=batchsize
-    def __call__(self):
-        with h5py.File(self.fname,'r',libver='latest') as f:
-            batchsize=self.batchsize
-            nbatches = int(f['jet_eta'].shape[0]/batchsize)
-            indices=np.arange(nbatches)
-            print("Initialize HDF5 Generator")
-            while True:
-                np.random.shuffle(indices)
-                for index in indices:
-                    ind=index*batch_size
-                    batch=((f["cluster_measured"][ind:ind+batchsize],f["jet_eta"][ind:ind+batchsize],f['jet_pt'][ind:ind+batchsize]),(f['trackPar'][ind:ind+batchsize],f['trackProb'][ind:ind+batchsize]))
+def parse_tfr(example):
+    feature_spec = {
+        'cluster_measured': tf.io.FixedLenFeature([], tf.string),
+        'jet_eta': tf.io.FixedLenFeature([], tf.string),
+        'jet_pt': tf.io.FixedLenFeature([], tf.string),
+        'trackPar': tf.io.FixedLenFeature([], tf.string),
+        'trackProb': tf.io.FixedLenFeature([], tf.string)
+    }
+    parsed_ex = tf.io.parse_single_example(example,feature_spec)
+    #reshape eta,pt
+    jet_eta = tf.reshape(tf.io.parse_tensor(parsed_ex['jet_eta'],out_type=tf.float16),(-1,))
+    jet_pt = tf.reshape(tf.io.parse_tensor(parsed_ex['jet_eta'],out_type=tf.float16),(-1,))
+    return ( (tf.io.parse_tensor(parsed_ex['cluster_measured'],out_type=tf.float16),
+        (jet_eta),
+        (jet_pt)),
+        ( (tf.io.parse_tensor(parsed_ex['trackPar'],out_type=tf.float16)),
+        (tf.io.parse_tensor(parsed_ex['trackProb'],out_type=tf.float16))))
 
-                    for i in range(batchsize):
-                        #yield ((f["cluster_measured"][i],f["jet_eta"][i],f['jet_pt'][i]),(f['trackPar'][i],f['trackProb'][i]))
-                        yield ((batch[0][0][i],batch[0][1][i],batch[0][2][i]),(batch[1][0][i],batch[1][1][i]))
-    def nbatches(self):
-        with h5py.File(self.fname,'r') as f:
-            nbatches = int(f['jet_eta'].shape[0]/self.batchsize)
-            return nbatches
-    def nrows(self):
-        with h5py.File(self.fname,'r') as f:
-            nbatches = f['jet_eta'].shape[0]
-            return nbatches
-
-class HDF5GeneratorN:
-    #yield from subset i/N (for interleave)
-    def __init__(self,fname,batchsize,N):
-        self.fname=fname
-        self.batchsize=batchsize
-        self.N=N #tot number of generators
-    def __call__(self,i):
-        self.i=i #generator index
-        self.n_batch = self.nbatches()
-        self.i_batch= int(self.n_batch*i/self.N)
-        self.f_batch= int(self.n_batch*(i+1)/self.N)
-        with h5py.File(self.fname,'r',libver='latest') as f:
-            batchsize=self.batchsize
-            indices=np.arange(self.i_batch,self.f_batch)
-            print("Initialize HDF5 Generator")
-            while True:
-                np.random.shuffle(indices)
-                for index in indices:
-                    ind=index*batch_size
-                    batch=((f["cluster_measured"][ind:ind+batchsize],f["jet_eta"][ind:ind+batchsize],f['jet_pt'][ind:ind+batchsize]),(f['trackPar'][ind:ind+batchsize],f['trackProb'][ind:ind+batchsize]))
-
-                    for i in range(batchsize):
-                        yield ((batch[0][0][i],batch[0][1][i],batch[0][2][i]),(batch[1][0][i],batch[1][1][i]))
-    def nbatches(self):
-        with h5py.File(self.fname,'r') as f:
-            nbatches = int(f['jet_eta'].shape[0]/self.batchsize)
-            return nbatches
-    def nrows(self):
-        with h5py.File(self.fname,'r') as f:
-            return f['jet_eta'].shape[0]
+        
+def parse_tfr_min(examplebatch):
+    feature_spec = {
+        'jet_eta': tf.io.FixedLenFeature([], tf.string),
+    }
+    #parsed_exs = tf.io.parse_single_example(examplebatch,feature_spec)
+    parsed_exs = tf.io.parse_example(examplebatch,feature_spec)
+    jet_eta = tf.reshape(tf.io.parse_tensor(parsed_exs['jet_eta'],out_type=tf.float16),(-1,))
+    return jet_eta
 
 
 # linear propagation to the 4 barrel layers, with plotting purpose only
@@ -654,39 +622,20 @@ else :  #loaded the central input
     #---------------- central input  ----------------#
 
     #HDF5
-    trainfile="/storage/local/data1/gpuscratch/njh/DeepCore_data/DeepCore_Training/train.hdf5"
-    valfile="/storage/local/data1/gpuscratch/njh/DeepCore_data/DeepCore_Training/val.hdf5"
+    #trainfile="/storage/local/data1/gpuscratch/njh/DeepCore_data/DeepCore_Training/train.hdf5"
+    #valfile="/storage/local/data1/gpuscratch/njh/DeepCore_data/DeepCore_Training/val.hdf5"
+    
+    #TDR
+    trainfile="/storage/local/data1/gpuscratch/njh/DeepCore_data/DeepCore_Training/TFRecs/train.tfr*"
+    valfile="/storage/local/data1/gpuscratch/njh/DeepCore_data/DeepCore_Training/TFRecs/val.tfr*"
+    
+    trainfiles = tf.io.matching_files(trainfile)
+    rawtraindata = tf.data.TFRecordDataset(trainfiles,compression_type="ZLIB")
+    train = rawtraindata.map(parse_tfr,num_parallel_calls=5)
 
-    #barrel full stat
-    ## files=glob.glob('/gpfs/ddn/srm/cms/store/user/vbertacc/NNClustSeedInputSimHit/QCD_Pt_1800to2400_TuneCUETP8M1_13TeV_pythia8//NNClustSeedInputSimHit_1LayClustPt_cutPt/190216_214452/0000/ntuple*.root') + glob.glob('/gpfs/ddn/srm/cm
-    ## files=glob.glob('/storage/local/data1/gpuscratch/hichemb/XTraining0211/DeepCoreTrainingSample.root')
-    #files=glob.glob('/storage/local/data1/gpuscratch/hichemb/Training0217/TrainingSamples/training/DeepCoreTrainingSample*.root')
-    #files_validation=glob.glob('/storage/local/data1/gpuscratch/hichemb/Training0217/TrainingSamples/validation/DeepCoreTrainingSample*.root')
-    #Generator2 approach
-    #trainingpath = "/storage/local/data1/gpuscratch/njh/DeepCore_data/DeepCore_Training/TrainingSamples/training/DeepCoreTrainingSample_*.root"
-    #validationpath = "/storage/local/data1/gpuscratch/njh/DeepCore_data/DeepCore_Training/TrainingSamples/validation/DeepCoreTrainingSample_*.root"
-    #validationpath = "/storage/local/data1/gpuscratch/hichemb/DeepCore_git/DeepCore_Training/TrainingSamples/validation/DeepCoreTrainingSample_*.root"
-    #GPU3 training/validation files
-    #trainingpath = "/storage/local/data1/gpuscratch/njh/Training0217/training/DeepCoreTrainingSample_*.root:DeepCoreNtuplizerTest/DeepCoreNtuplizerTree;"
-    #validationpath = "/storage/local/data1/gpuscratch/njh/Training0217/validation/DeepCoreTrainingSample_*.root:DeepCoreNtuplizerTest/DeepCoreNtuplizerTree;"
-
-    #files_validation=glob.glob('/gpfs/ddn/srm/cms/store/user/vbertacc/NNClustSeedInputSimHit/QCD_Pt_1800to2400_TuneCUETP8M1_13TeV_pythia8//NNClustSeedInputSimHit_1LayClustPt_cutPt/190216_214452/0004/ntuple_simHit_1LayClustPt_cutPt_46*.root')+glob.glob('/gpfs/ddn/srm/cms/store/user/vbertacc/NNClustSeedInputSimHit/QCD_Pt_1800to2400_TuneCUETP8M1_13TeV_pythia8//NNClustSeedInputSimHit_1LayClustPt_cutPt/190216_214452/0004/ntuple_simHit_1LayClustPt_cutPt_47*.root')+glob.glob('/gpfs/ddn/srm/cms/store/user/vbertacc/NNClustSeedInputSimHit/QCD_Pt_1800to2400_TuneCUETP8M1_13TeV_pythia8//NNClustSeedInputSimHit_1LayClustPt_cutPt/190216_214452/0004/ntuple_simHit_1LayClustPt_cutPt_48*.root')+glob.glob('/gpfs/ddn/srm/cms/store/user/vbertacc/NNClustSeedInputSimHit/QCD_Pt_1800to2400_TuneCUETP8M1_13TeV_pythia8//NNClustSeedInputSimHit_1LayClustPt_cutPt/190216_214452/0004/ntuple_simHit_1LayClustPt_cutPt_49*.root')
-
-    #barrel small stat
-    # files=glob.glob('/gpfs/ddn/srm/cms/store/user/vbertacc/NNClustSeedInputSimHit/QCD_Pt_1800to2400_TuneCUETP8M1_13TeV_pythia8/NNClustSeedInputSimHit_1LayClustPt_cutPt/190216_214452/0000/ntuple_simHit_1LayClustPt_cutPt_9*.root')
-    # files_validation=glob.glob('/gpfs/ddn/srm/cms/store/user/vbertacc/NNClustSeedInputSimHit/QCD_Pt_1800to2400_TuneCUETP8M1_13TeV_pythia8/NNClustSeedInputSimHit_1LayClustPt_cutPt/190216_214452/0000/ntuple_simHit_1LayClustPt_cutPt_9*.root')
-
-    #Endcap (pt cut 500GeV, 30x30) full stat
-    # files=glob.glob('/gpfs/ddn/srm/cms/store/user/vbertacc/NNClustSeedInputSimHit/UBGGun_E-1000to7000_Eta-1p2to2p1_13TeV_pythia8/NNClustSeedInputSimHit_EC_centralEgun_pt500cut/200603_153129/0000/nuple_ntuple_EC_centralEgun_pt500cut_*.root')+ glob.glob('/gpfs/ddn/srm/cms/store/user/vbertacc/NNClustSeedInputSimHit/UBGGun_E-1000to7000_Eta-1p2to2p1_13TeV_pythia8/NNClustSeedInputSimHit_EC_centralEgun_pt500cut/200603_153129/0002/nuple_ntuple_EC_centralEgun_pt500cut_*.root')+ glob.glob('/gpfs/ddn/srm/cms/store/user/vbertacc/NNClustSeedInputSimHit/UBGGun_E-1000to7000_Eta-1p2to2p1_13TeV_pythia8/NNClustSeedInputSimHit_EC_centralEgun_pt500cut/200603_153129/0003/nuple_ntuple_EC_centralEgun_pt500cut_*.root')+ glob.glob('/gpfs/ddn/srm/cms/store/user/vbertacc/NNClustSeedInputSimHit/UBGGun_E-1000to7000_Eta-1p2to2p1_13TeV_pythia8/NNClustSeedInputSimHit_EC_centralEgun_pt500cut/200603_153129/0004/nuple_ntuple_EC_centralEgun_pt500cut_*.root')
-    # files_validation = glob.glob('/gpfs/ddn/srm/cms/store/user/vbertacc/NNClustSeedInputSimHit/UBGGun_E-1000to7000_Eta-1p2to2p1_13TeV_pythia8/NNClustSeedInputSimHit_EC_centralEgun_pt500cut/200603_153129/0001/nuple_ntuple_EC_centralEgun_pt500cut_*.root')
-
-    # Endcap small stat
-    # files=glob.glob('/gpfs/ddn/srm/cms/store/user/vbertacc/NNClustSeedInputSimHit/UBGGun_E-1000to7000_Eta-1p2to2p1_13TeV_pythia8/NNClustSeedInputSimHit_EC_centralEgun_pt500cut/200603_153129/0000/ntuple_EC_centralEgun_pt500cut_*.root')
-    # files_validation = glob.glob('/gpfs/ddn/srm/cms/store/user/vbertacc/NNClustSeedInputSimHit/UBGGun_E-1000to7000_Eta-1p2to2p1_13TeV_pythia8/NNClustSeedInputSimHit_EC_centralEgun_pt500cut/200603_153129/0001/ntuple_EC_centralEgun_pt500cut_1*.root')
-
-
-
-
+    valfiles = tf.io.matching_files(valfile)
+    rawvaldata = tf.data.TFRecordDataset(valfiles,compression_type="ZLIB")
+    val = rawvaldata.map(parse_tfr,num_parallel_calls=5)
 
 #-----------------------------------------------------------------------------------------#
 #----------------------------------- extra preliminary tests -----------------------------#
@@ -837,10 +786,28 @@ if(LOCAL_INPUT) :
     tot_events_validation=tot_events*valSplit
     tot_events=tot_events*(1-valSplit)
 else :
-    trainGenN = HDF5GeneratorN(trainfile,batch_size*4,1)
-    valGenN = HDF5GeneratorN(trainfile,batch_size*4,1)
-    tot_events = trainGenN.nrows()
-    tot_events_validation = valGenN.nrows()
+    try:
+        with open("/".join(trainfile.split("/")[:-1])+"/train.count",'r') as f:
+            tot_events = int(f.readlines()[0].rstrip())
+    except:
+        print("counting train events and saving for future use")
+        t1=time.time()
+        tot_events = train.reduce(0,lambda x, _: x+1).numpy()
+        print(time.time()-t1)
+        with open("/".join(trainfile.split("/")[:-1])+"/train.count",'w') as f:
+            f.write(str(tot_events)+"\n")
+    
+    try:
+        with open("/".join(valfile.split("/")[:-1])+"/val.count",'r') as f:
+            tot_events_validation = int(f.readlines()[0].rstrip())
+    except:
+        print("counting val events and saving for future use")
+        t1=time.time()
+        tot_events_validation = val.reduce(0,lambda x, _: x+1).numpy()
+        print(time.time()-t1)
+        with open("/".join(valfile.split("/")[:-1])+"/val.count",'w') as f:
+            f.write(str(tot_events_validation)+"\n") 
+    
     print("number of rows (training) {}".format(tot_events))
     print("number of rows (validation) {}".format(tot_events_validation))
     
@@ -860,8 +827,6 @@ checkpointer = ModelCheckpoint(filepath="weights.{epoch:02d}-{val_loss:.4f}.hdf5
 #checkpointer= ModelCheckpoint(filepath="weights.{epoch:02d}.hdf5",verbose=1, save_weights_only=False)
 
 if TRAIN :
-    stepNum = jetNum/batch_size
-    print("Number of Steps: {}".format(stepNum)) 
     if CONTINUE_TRAINING :
        ## Using weight file given from command line otherwise use hardcode weight file 
        if WEIGHTS_CONTINUE:
@@ -890,49 +855,30 @@ if TRAIN :
             history  = model.fit([input_,input_jeta,input_jpt], [target_,target_prob],  batch_size=batch_size, epochs=epochs+start_epoch, verbose = 2, validation_split=valSplit,  initial_epoch=start_epoch, callbacks=[checkpointer])            
     else : #full standard training
         ## Adjust step size between trainings: if step size = 1/20 then inverse_step_size = 20
-        #history = model.fit_generator(generator=Generator(files),steps_per_epoch=stepNum, epochs=epochs+start_epoch, verbose = 2, max_queue_size=1, validation_data=Generator(files_validation),  validation_steps=jetNum_validation/batch_
-        #history = model.fit(Generator2(trainingpath,batch_size),steps_per_epoch=int(stepNum/inverse_step_size),epochs=start_epoch+args.Epochs,verbose=2,max_queue_size=1,validation_data=Generator2(validationpath,batch_size),validation_steps=int(jetNum_validation/(val_inverse_step_size*batch_size)), initial_epoch=start_epoch, callbacks=[checkpointer])
+        
         inverse_step_size=1
         val_inverse_step_size=1
-            
-        #HDF5 parallel
-        trainfile="/storage/local/data1/gpuscratch/njh/DeepCore_data/DeepCore_Training/train.hdf5"
-        valfile="/storage/local/data1/gpuscratch/njh/DeepCore_data/DeepCore_Training/val.hdf5"
-        precision=np.float16
-        
-        #use four copies of generator and interleave
-        N=4
-        trainGenN = HDF5GeneratorN(trainfile,batch_size*4,N)
-        trainSteps=int(trainGenN.nrows()/batch_size)
+        #TFRecord
+        #shuffle,batch,repeat, then map!? 
 
-        hdfTrain = tf.data.Dataset.range(N).interleave(
-            lambda i: tf.data.Dataset.from_generator(
-                trainGenN, args=(i,),
-                output_signature=( (tf.TensorSpec(shape=(jetDim,jetDim,layNum), dtype=precision),
-                    tf.TensorSpec(shape=(), dtype=precision),
-                    tf.TensorSpec(shape=(), dtype=precision)),
-                    (tf.TensorSpec(shape=(jetDim,jetDim,overlapNum,parNum+1), dtype=precision),
-                    tf.TensorSpec(shape=(jetDim,jetDim,overlapNum,2), dtype=precision))
-                )
-            ), cycle_length=N, num_parallel_calls=4, deterministic=False #dangerous?
-        ).batch(batch_size).apply(tf.data.experimental.copy_to_device("/gpu:0")).prefetch(tf.data.AUTOTUNE)
-        
-        valGenN = HDF5GeneratorN(valfile,batch_size*4,N)
-        hdfVal = tf.data.Dataset.range(N).interleave(
-            lambda i: tf.data.Dataset.from_generator(
-                valGenN, args=(i,),
-                output_signature=( (tf.TensorSpec(shape=(jetDim,jetDim,layNum), dtype=precision),
-                    tf.TensorSpec(shape=(), dtype=precision),
-                    tf.TensorSpec(shape=(), dtype=precision)),
-                    (tf.TensorSpec(shape=(jetDim,jetDim,overlapNum,parNum+1), dtype=precision),
-                    tf.TensorSpec(shape=(jetDim,jetDim,overlapNum,2), dtype=precision))
-                )
-            ), cycle_length=N, num_parallel_calls=4, deterministic=False
-        ).batch(batch_size).apply(tf.data.experimental.copy_to_device("/gpu:0")).prefetch(tf.data.AUTOTUNE)
-        valSteps=int(valGenN.nrows()/batch_size)
+        #trainfiles = tf.io.matching_files(trainfile)
+        #rawtraindata = tf.data.TFRecordDataset(trainfiles,compression_type="ZLIB")
+        #train = rawtraindata.map(parse_tfr,num_parallel_calls=5)
 
+        #valfiles = tf.io.matching_files(valfile)
+        #rawvaldata = tf.data.TFRecordDataset(valfiles,compression_type="ZLIB")
+        #val = rawvaldata.map(parse_tfr,num_parallel_calls=5)
+
+
+        traindata= train.shuffle(buffer_size=4*batch_size).batch(batch_size).repeat().prefetch(tf.data.AUTOTUNE)
+        valdata = val.shuffle(buffer_size=4*batch_size).batch(batch_size).repeat().prefetch(tf.data.AUTOTUNE)
+        
+        trainingSteps=int(tot_events/batch_size)
+        valSteps=int(tot_events_validation/batch_size)
+        trainingSteps=10000
+        valSteps=2500
         start_time=time.time() 
-        history = model.fit(hdfTrain,steps_per_epoch=trainSteps,epochs=start_epoch+args.Epochs,validation_data=hdfVal,validation_steps=valSteps, initial_epoch=start_epoch, callbacks=[checkpointer],verbose=2)
+        history = model.fit(traindata,steps_per_epoch=trainingSteps,epochs=start_epoch+args.Epochs, initial_epoch=start_epoch, callbacks=[checkpointer],verbose=2,validation_data=valdata,validation_steps=valSteps)
         stop_time=time.time() 
         
         print("Duration: {:.2f}".format(stop_time-start_time))
