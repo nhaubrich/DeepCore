@@ -1,12 +1,12 @@
 from __future__ import print_function
 import os
+
+
 #os.environ['MKL_NUM_THREADS'] = '40'
 #os.environ['GOTO_NUM_THREADS'] = '40'
 #os.environ['OMP_NUM_THREADS'] = '40'
 #os.environ['openmp'] = 'True'
-
 import tensorflow as tf
-
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import clip_ops
 from tensorflow.python.ops import math_ops
@@ -21,7 +21,7 @@ import tensorflow.keras.backend as K
 
 from keras.callbacks import Callback
 from keras.models import Model,load_model, Sequential
-from keras.layers import Input, LSTM, Dense, Flatten, Conv2D, MaxPooling2D, Dropout, Reshape, Conv2DTranspose, concatenate, Concatenate, ZeroPadding2D, UpSampling2D, UpSampling1D
+from keras.layers import Input, LSTM, Dense, Flatten, Conv2D, MaxPooling2D, Dropout, Reshape, Conv2DTranspose, concatenate, Concatenate, ZeroPadding2D, UpSampling2D, UpSampling1D, SpatialDropout2D, Activation
 from keras.optimizers import *
 from keras.initializers import *
 from keras.callbacks import ModelCheckpoint
@@ -39,10 +39,12 @@ from  matplotlib import pyplot as plt
 import pylab
 import glob
 
-import uproot3
 import uproot
 import time
 import h5py
+
+import gc
+import psutil
 
 gpus = tf.config.experimental.list_physical_devices('GPU')
 tf.config.experimental.set_memory_growth(gpus[0], True)
@@ -79,6 +81,9 @@ parser.add_argument('--testSampleBuild',        dest='testSampleBuild',         
 parser.add_argument('--extraValidation',        dest='extraValidation',         action='store_const',   const=True, default=False,           help='extra validation plot during training (very time consuming callback!)')
 parser.add_argument('--rgb',                    dest='rgb',                     action='store_const',   const=True, default=False,           help='RGB color scheme plots (used in all the presented results')
 
+parser.add_argument('--dir', default=False, help='training directory location')
+parser.add_argument('--lr', default=.0001, help='learning rate for training')
+
 ## Adding new parser options
 ## passing number of epochs for training from command line rather than hard code
 parser.add_argument('--epochs',                  dest='Epochs',    action='store',                     default=0,  type=int,   help=' Number of epochs to use for training')
@@ -110,6 +115,7 @@ EPOCHS_USED = args.Epochs
 WEIGHTS_CONTINUE = args.Weights
 EPOCHS_CONTINUE =args.EpochsStart
 CSV_LOAD = args.Csv
+learning_rate = float(args.lr)
 #------------------------------------------------------------------------------------------#
 #----------------------------- INTERNAL CONFIGURATION PARAMETERS --------------------------#
 #------------------------------------------------------------------------------------------#
@@ -133,8 +139,7 @@ inputTreeName= "DeepCoreNtuplizerTree" ##"NNClustSeedInputSimHitTree" ##"DeepCor
 # inputTreeName="NNClustSeedInputSimHitTree" #2017 ntuples have this name
 
 # traing parameter configuration
-batch_size = 64 # Batch size for training.
-#batch_size = 1 # Batch size for training.
+batch_size = 256 # Batch size for training.
 ## changed to use number of epochs provided by command line, otehrwise use hardcoded number
 if EPOCHS_USED:
   epochs = EPOCHS_USED
@@ -301,15 +306,38 @@ class NBatchLogger(Callback):
             self.metric_cache.clear()
 
 
+class CleanUp(keras.callbacks.Callback):
+    #Manual garbage collection to mitigate memory leaks. Overkill?
+    def __init__(self):
+        pass
+    def on_epoch_begin(self,epoch, logs={}):
+        tf.keras.backend.clear_session()
+        gc.collect()
+    def on_epoch_end(self,epoch, logs={}):
+        tf.keras.backend.clear_session()
+        gc.collect()
+        print("CPU RAM usage: {}MB".format(psutil.Process().memory_info().rss>>20))
+    def on_test_begin(self,epoch, logs={}):
+        time.sleep(1)
+    def on_test_end(self,epoch,logs={}):
+        time.sleep(1)
+        tf.keras.backend.clear_session()
+        gc.collect()
+
+
 #used in the losses
+@tf.function
 def _to_tensor(x, dtype):
     return ops.convert_to_tensor(x, dtype=dtype)
 
 #used in the losses
+@tf.function
 def epsilon():
     return _Epsilon
 
 #loss function for probability, used in the first part of the training
+
+@tf.function
 def loss_ROI_crossentropy(target, output):
     epsilon_ = _to_tensor(keras.backend.epsilon(), output.dtype.base_dtype)
     output = clip_ops.clip_by_value(output, epsilon_, 1 - epsilon_)
@@ -322,6 +350,7 @@ def loss_ROI_crossentropy(target, output):
     return tf.reduce_sum(retval, axis=None)/(tf.reduce_sum(wei,axis=None)+0.00001) #0.00001 needed to avoid numeric issue
 
 #loss function for probability, used in the last part of the training (difference: non-zero weight to pixel far from crossing point)
+@tf.function
 def loss_ROIsoft_crossentropy(target, output):
     epsilon_ = _to_tensor(keras.backend.epsilon(), output.dtype.base_dtype)
     output = clip_ops.clip_by_value(output, epsilon_, 1 - epsilon_)
@@ -339,6 +368,7 @@ def loss_ROIsoft_crossentropy(target, output):
     return tf.reduce_sum(retval,axis=None)/(tf.reduce_sum((wei+0.01),axis=None))
 
 #loss for track parameter
+@tf.function
 def loss_mse_select_clipped(y_true, y_pred) :
     wei = y_true[:,:,:,:,-1:]
     pred = y_pred[:,:,:,:,:-1]
@@ -351,30 +381,6 @@ def loss_mse_select_clipped(y_true, y_pred) :
     out =K.square(tf.clip_by_value(pred-true,-5,5))*wei  # Clipping at +/-5 sigmas
     return tf.reduce_sum(out, axis=None)/(tf.reduce_sum(wei,axis=None)*5+0.00001) #5=parNum
 
-# Generator used to load all the input file in the LOCAL_INPUT=False workflow
-## Changed uproot to uproot3 in order to use central sample
-
-#OUTDATED! Doesn't run on all cycles
-def Generator(files) :
-     while 1:
-        print("entering while loop")
-        for f in files :
-            import uproot3
-            tfile = uproot3.open(f)
-            tree = tfile[inputModuleName][inputTreeName]
-            input_ = tree.array("cluster_measured")
-            input_jeta = tree.array("jet_eta")
-            input_jpt = tree.array("jet_pt")
-            target_ = tree.array("trackPar")
-            target_prob = tree.array("trackProb")
-
-            wei = target_[:,:,:,:,-1:]
-            nev = len(target_prob)
-            target_prob = np.reshape(target_prob, (nev,jetDim,jetDim,overlapNum,1))
-            target_prob = concatenatenp([target_prob,wei],axis=4)
-            print(len(input_jeta),batch_size, len(input_jeta)/batch_size)
-            for k in range(int(len(input_jeta)/batch_size)) :
-                yield [input_[batch_size*(k):batch_size*(k+1)],input_jeta[batch_size*(k):batch_size*(k+1)],input_jpt[batch_size*(k):batch_size*(k+1)]], [target_[batch_size*(k):batch_size*(k+1)],target_prob[batch_size*(k):batch_size*(k+1)]]
 
 #runs on cycles 1-8, automatic batching, uproot4
 def Generator2(filepath,batch_size=0,count=False):
@@ -401,12 +407,11 @@ def Generator2(filepath,batch_size=0,count=False):
                     #target_prob[:,:,:,:,-1][zero_elements] = 0 #reassign the inf values back to 0
                     
                     ## debug
-                    ##pdb.set_trace()
                     yield [chunk['cluster_measured'][:,:,:,0:layNum],chunk["jet_eta"],chunk["jet_pt"]],[chunk["trackPar"],target_prob]
         if count:
             break
 
-
+#"generater" for tfrecord. fast!
 def parse_tfr(example):
     feature_spec = {
         'cluster_measured': tf.io.FixedLenFeature([], tf.string),
@@ -424,17 +429,6 @@ def parse_tfr(example):
         (jet_pt)),
         ( (tf.io.parse_tensor(parsed_ex['trackPar'],out_type=tf.float16)),
         (tf.io.parse_tensor(parsed_ex['trackProb'],out_type=tf.float16))))
-
-        
-def parse_tfr_min(examplebatch):
-    feature_spec = {
-        'jet_eta': tf.io.FixedLenFeature([], tf.string),
-    }
-    #parsed_exs = tf.io.parse_single_example(examplebatch,feature_spec)
-    parsed_exs = tf.io.parse_example(examplebatch,feature_spec)
-    jet_eta = tf.reshape(tf.io.parse_tensor(parsed_exs['jet_eta'],out_type=tf.float16),(-1,))
-    return jet_eta
-
 
 # linear propagation to the 4 barrel layers, with plotting purpose only
 def prop_on_layer(x1,y1,eta,phi,eta_jet,lay) :
@@ -626,15 +620,20 @@ else :  #loaded the central input
     #valfile="/storage/local/data1/gpuscratch/njh/DeepCore_data/DeepCore_Training/val.hdf5"
     
     #TDR
-    trainfile="/storage/local/data1/gpuscratch/njh/DeepCore_data/DeepCore_Training/TFRecs/train.tfr*"
-    valfile="/storage/local/data1/gpuscratch/njh/DeepCore_data/DeepCore_Training/TFRecs/val.tfr*"
+    if args.dir==False:
+        trainfile="/storage/local/data1/gpuscratch/njh/DeepCore_data/DeepCore_Training/TFRecs/train.tfr*"
+        valfile="/storage/local/data1/gpuscratch/njh/DeepCore_data/DeepCore_Training/TFRecs/val.tfr*"
+    else:
+        trainfile=args.dir+"train.tfr*"
+        valfile=args.dir+"val.tfr*"
     
+    print(trainfile,valfile)
     trainfiles = tf.io.matching_files(trainfile)
-    rawtraindata = tf.data.TFRecordDataset(trainfiles,compression_type="ZLIB")
-    train = rawtraindata.map(parse_tfr,num_parallel_calls=5)
+    rawtraindata = tf.data.TFRecordDataset(trainfiles,compression_type="ZLIB",num_parallel_reads=tf.data.AUTOTUNE)
+    train = rawtraindata.map(parse_tfr,num_parallel_calls=tf.data.AUTOTUNE)
 
     valfiles = tf.io.matching_files(valfile)
-    rawvaldata = tf.data.TFRecordDataset(valfiles,compression_type="ZLIB")
+    rawvaldata = tf.data.TFRecordDataset(valfiles,compression_type="ZLIB",num_parallel_reads=tf.data.AUTOTUNE)
     val = rawvaldata.map(parse_tfr,num_parallel_calls=5)
 
 #-----------------------------------------------------------------------------------------#
@@ -727,46 +726,42 @@ if TRAIN or PREDICT :
 #    reshaped_prob = Reshape((jetDim,jetDim,overlapNum,2))(conv1_3_1)
 #######################################################################################################################
      # DeepCore 2.2 Architecture
-    conv30_9 = Conv2D(50,7, data_format="channels_last", input_shape=(jetDim,jetDim,layNum+2), activation='relu',padding="same")(ComplInput)
-    conv30_7 = Conv2D(40,5, data_format="channels_last", activation='relu',padding="same")(conv30_9)
-    conv30_5 = Conv2D(40,5, data_format="channels_last", activation='relu',padding="same")(conv30_7)#
-    conv20_5 = Conv2D(30,5, data_format="channels_last", activation='relu',padding="same")(conv30_5)
-    conv15_5 = Conv2D(30,3, data_format="channels_last", activation='relu',padding="same")(conv20_5)
 
-    conv15_3_1 = Conv2D(18,3, data_format="channels_last",activation='relu', padding="same")(conv15_5)
-    conv15_3_2 = Conv2D(18,3, data_format="channels_last",activation='relu', padding="same")(conv15_3_1)
-    conv15_3_3 = Conv2D(18,3, data_format="channels_last",activation='relu', padding="same")(conv15_3_2) #(12,3)
-    conv15_3 = Conv2D(18,3, data_format="channels_last",padding="same")(conv15_3_3) #(12,3)
+
+
+    #dropout e.g. conv30_9_d = SpatialDropout2D(p_dropout,data_format='channels_last')(conv30_9)
+    activation='relu'
+    conv30_9 = Conv2D(50,7, data_format="channels_last", input_shape=(jetDim,jetDim,layNum+2), activation=activation,padding="same")(ComplInput)
+    conv30_7 = Conv2D(40,5, data_format="channels_last", activation=activation,padding="same")(conv30_9)
+    conv30_5 = Conv2D(40,5, data_format="channels_last", activation=activation,padding="same")(conv30_7)#
+    conv20_5 = Conv2D(30,5, data_format="channels_last", activation=activation,padding="same")(conv30_5)
+    conv15_5 = Conv2D(30,3, data_format="channels_last", activation=activation,padding="same")(conv20_5)
+
+    conv15_3_1 = Conv2D(18,3, data_format="channels_last",activation=activation, padding="same")(conv15_5)
+    conv15_3_2 = Conv2D(18,3, data_format="channels_last",activation=activation, padding="same")(conv15_3_1)
+    conv15_3_3 = Conv2D(18,3, data_format="channels_last",activation=activation, padding="same")(conv15_3_2) #(12,3)
+    conv15_3 = Conv2D(18,3, data_format="channels_last",padding="same")(conv15_3_3) #(12,3) #No activation!?
+
     reshaped = Reshape((jetDim,jetDim,overlapNum,parNum+1))(conv15_3)
 
-    conv12_3_1 = Conv2D(30,3, data_format="channels_last", activation='relu', padding="same")(conv15_5)  #new
-    conv1_3_2 = Conv2D(30,3, data_format="channels_last", activation='relu', padding="same")(conv12_3_1) #drop7lb   #new
-    conv1_3_3 = Conv2D(30,3, data_format="channels_last", activation='relu',padding="same")(conv1_3_2) #new
+    conv12_3_1 = Conv2D(30,3, data_format="channels_last", activation=activation, padding="same")(conv15_5)  #new
+    conv1_3_2 = Conv2D(30,3, data_format="channels_last", activation=activation, padding="same")(conv12_3_1) #drop7lb   #new
+    conv1_3_3 = Conv2D(30,3, data_format="channels_last", activation=activation,padding="same")(conv1_3_2) #new
     conv1_3_1 = Conv2D(6,3, data_format="channels_last", activation='sigmoid', padding="same")(conv1_3_3)
     reshaped_prob = Reshape((jetDim,jetDim,overlapNum,2))(conv1_3_1)
+    
 #######################################################################################################################
+    
     model = Model([NNinputs,NNinputs_jeta,NNinputs_jpt],[reshaped,reshaped_prob])
     
     # Made it easier to adjust learning rate
-    #anubi = keras.optimizers.Adam(learning_rate=0.00001)#after epochs 252 (with septs/20 and batch_size 64)
-    #Learning rate adjustments:
-    # anubi = keras.optimizers.Adam(learning_rate=0.01)  #10-2
-    #anubi = keras.optimizers.Adam(learning_rate=0.001)  #10-3
-    #anubi = keras.optimizers.Adam(learning_rate=0.0001)  #10-4
-    #anubi = keras.optimizers.Adam(learning_rate=0.00001)  #10-5
-    anubi = keras.optimizers.Adam(learning_rate=0.000001)  #10-6
-    # anubi = keras.optimizers.Adam(learning_rate=0.0000001)  #10-7
-    # anubi = keras.optimizers.Adam(learning_rate=0.00000001)  #10-8
+    anubi = keras.optimizers.Adam(learning_rate=learning_rate)  #10-4
     
     # Loss function adjustments:
-    # ROI
-    #model.compile(optimizer=anubi, loss=[loss_mse_select_clipped,loss_ROI_crossentropy], loss_weights=[1,1]) #FOR EARLY TRAINING
+    #model.compile(optimizer=anubi, loss=[loss_mse_select_clipped,loss_ROI_crossentropy], loss_weights=[1,1]) ##ROI FOR EARLY TRAINING
     # ROIsoft
     model.compile(optimizer=anubi, loss=[loss_mse_select_clipped,loss_ROIsoft_crossentropy], loss_weights=[1,1]) #FOR LATE TRAINING
-
-
-
-    model.summary()
+    #model.summary()
 
 
 #--------------------------------------------------------------------------------------------------------#
@@ -822,9 +817,9 @@ jetNum_validation = tot_events_validation
 print("total number of events =", jetNum)
 print("total number of events validation=", jetNum_validation)
 
-## commented out since cant find val loss
-checkpointer = ModelCheckpoint(filepath="weights.{epoch:02d}-{val_loss:.4f}.hdf5",verbose=1, save_weights_only=False)
-#checkpointer= ModelCheckpoint(filepath="weights.{epoch:02d}.hdf5",verbose=1, save_weights_only=False)
+checkpointer = ModelCheckpoint(filepath="weights.{epoch:02d}-{val_loss:.4f}.hdf5",verbose=1, save_weights_only=False,)
+learningRateReducer = tf.keras.callbacks.ReduceLROnPlateau(monitor="val_loss",factor=0.1,patience=5,min_lr=10e-8,verbose=1)
+cleanup = CleanUp()
 
 if TRAIN :
     if CONTINUE_TRAINING :
@@ -854,34 +849,23 @@ if TRAIN :
         else :
             history  = model.fit([input_,input_jeta,input_jpt], [target_,target_prob],  batch_size=batch_size, epochs=epochs+start_epoch, verbose = 2, validation_split=valSplit,  initial_epoch=start_epoch, callbacks=[checkpointer])            
     else : #full standard training
-        ## Adjust step size between trainings: if step size = 1/20 then inverse_step_size = 20
-        
-        inverse_step_size=1
-        val_inverse_step_size=1
-        #TFRecord
-        #shuffle,batch,repeat, then map!? 
-
-        #trainfiles = tf.io.matching_files(trainfile)
-        #rawtraindata = tf.data.TFRecordDataset(trainfiles,compression_type="ZLIB")
-        #train = rawtraindata.map(parse_tfr,num_parallel_calls=5)
-
-        #valfiles = tf.io.matching_files(valfile)
-        #rawvaldata = tf.data.TFRecordDataset(valfiles,compression_type="ZLIB")
-        #val = rawvaldata.map(parse_tfr,num_parallel_calls=5)
-
 
         traindata= train.shuffle(buffer_size=4*batch_size).batch(batch_size).repeat().prefetch(tf.data.AUTOTUNE)
         valdata = val.shuffle(buffer_size=4*batch_size).batch(batch_size).repeat().prefetch(tf.data.AUTOTUNE)
         
         trainingSteps=int(tot_events/batch_size)
         valSteps=int(tot_events_validation/batch_size)
-        trainingSteps=10000
-        valSteps=2500
+       
+        
+
         start_time=time.time() 
-        history = model.fit(traindata,steps_per_epoch=trainingSteps,epochs=start_epoch+args.Epochs, initial_epoch=start_epoch, callbacks=[checkpointer],verbose=2,validation_data=valdata,validation_steps=valSteps)
+        history = model.fit(traindata,steps_per_epoch=trainingSteps,epochs=start_epoch+args.Epochs, initial_epoch=start_epoch, callbacks=[checkpointer,learningRateReducer, cleanup],verbose=2,validation_data=valdata,validation_steps=valSteps)
+        #tensorboard profiler
+        #tf.profiler.experimental.start("tflogs/")
+        #tf.profiler.experimental.stop()
         stop_time=time.time() 
         
-        print("Duration: {:.2f}".format(stop_time-start_time))
+        print("Training Duration: {:.2f}".format(stop_time-start_time))
         print("done running; now save")
         
     model.save_weights('DeepCore_train_ev{ev}_ep{ep}.h5'.format(ev=jetNum, ep=epochs+start_epoch))

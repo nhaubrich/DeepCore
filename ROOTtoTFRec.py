@@ -56,20 +56,21 @@ def ROOTToOneTFRec(rootfiles,oname,chunksize):
             #break
 
 def runAsync(files,oname,batchsize,Nprocs):
-    pool = pool = multiprocessing.Pool(Nprocs)
+    #print("files",files)
+    pool = multiprocessing.Pool(Nprocs)
     splitfiles = [[] for x in range(Nprocs)]
     for i,fname in enumerate(files):
         splitfiles[i%Nprocs].append(fname)
-   
     results = []
     for i in range(Nprocs):
         result = pool.apply_async( ROOTToOneTFRec, args=(splitfiles[i], oname+str(i), batchsize) )
         results.append( result )
+    print(results)
     [result.wait() for result in results]
 
-h5dir="/storage/local/data1/gpuscratch/njh/DeepCore_data/DeepCore_Training/TFRecs/"
-train_path = "/storage/local/data1/gpuscratch/njh/DeepCore_data/DeepCore_Training/TrainingSamples/training/*.root*"
-#runAsync(glob.glob(train_path),h5dir+"train.tfr",512,4)
+h5dir="/eos/user/n/nihaubri/DeepCore_data/latest/tdf/"
+train_path = "/eos/user/n/nihaubri/DeepCore_data/latest/TrainingSamples/training/*.root*"
+val_path = "/eos/user/n/nihaubri/DeepCore_data/latest/TrainingSamples/validation/*.root*"
 
-val_path = "/storage/local/data1/gpuscratch/njh/DeepCore_data/DeepCore_Training/TrainingSamples/validation/*.root*"
-runAsync(glob.glob(val_path),h5dir+"val.tfr",512,2)
+runAsync(glob.glob(train_path),h5dir+"train.tfr",512,6)
+runAsync(glob.glob(val_path),h5dir+"val.tfr",512,6)
