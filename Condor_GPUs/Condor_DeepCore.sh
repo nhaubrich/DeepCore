@@ -7,10 +7,10 @@ mv */* .
 cd ..
 
 #start
-#singularity run --nv /cvmfs/unpacked.cern.ch/registry.hub.docker.com/fnallpc/fnallpc-docker:tensorflow-2.12.0-gpu-singularity -c "python DeepCore_GPU.py --training --epochs 30 --dir data/"
+singularity run --nv /cvmfs/unpacked.cern.ch/registry.hub.docker.com/fnallpc/fnallpc-docker:tensorflow-2.12.0-gpu-singularity -c "python DeepCore_GPU.py --training --epochs 30 --dir data/"
 
 #continue
-singularity run --nv /cvmfs/unpacked.cern.ch/registry.hub.docker.com/fnallpc/fnallpc-docker:tensorflow-2.12.0-gpu-singularity -c "python DeepCore_GPU.py --training --epochs 10 --dir data/ --continueTraining --epochsstart 30 --weights models/DeepCore_train_ev8069968_ep30.h5 --lr .00004"
+#singularity run --nv /cvmfs/unpacked.cern.ch/registry.hub.docker.com/fnallpc/fnallpc-docker:tensorflow-2.12.0-gpu-singularity -c "python DeepCore_GPU.py --training --epochs 30 --dir data/ --continueTraining --epochsstart 30 --weights models/DeepCore_train_ev8069968_ep30.h5 --lr .0004"
 
 #if debug, return tensorboard trace
 #cd tflogs

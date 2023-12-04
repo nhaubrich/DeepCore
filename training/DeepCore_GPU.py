@@ -383,7 +383,7 @@ def loss_mse_select_clipped(y_true, y_pred) :
 
 
 #runs on cycles 1-8, automatic batching, uproot4
-def Generator2(filepath,batch_size=0,count=False):
+def Generator2(filepath,batch_size=0,count=False,loop=False):
     if count:
         branches = ["jet_eta"]
         batch_size = 1000
@@ -408,7 +408,7 @@ def Generator2(filepath,batch_size=0,count=False):
                     
                     ## debug
                     yield [chunk['cluster_measured'][:,:,:,0:layNum],chunk["jet_eta"],chunk["jet_pt"]],[chunk["trackPar"],target_prob]
-        if count:
+        if count or loop:
             break
 
 #"generater" for tfrecord. fast!
@@ -421,14 +421,12 @@ def parse_tfr(example):
         'trackProb': tf.io.FixedLenFeature([], tf.string)
     }
     parsed_ex = tf.io.parse_single_example(example,feature_spec)
-    #reshape eta,pt
-    jet_eta = tf.reshape(tf.io.parse_tensor(parsed_ex['jet_eta'],out_type=tf.float16),(-1,))
-    jet_pt = tf.reshape(tf.io.parse_tensor(parsed_ex['jet_eta'],out_type=tf.float16),(-1,))
-    return ( (tf.io.parse_tensor(parsed_ex['cluster_measured'],out_type=tf.float16),
-        (jet_eta),
-        (jet_pt)),
-        ( (tf.io.parse_tensor(parsed_ex['trackPar'],out_type=tf.float16)),
-        (tf.io.parse_tensor(parsed_ex['trackProb'],out_type=tf.float16))))
+    cluster_measured =	tf.io.parse_tensor(parsed_ex['cluster_measured'],out_type=tf.float16)
+    jet_eta =	        tf.reshape(tf.io.parse_tensor(parsed_ex['jet_eta'],out_type=tf.float16),(-1,))
+    jet_pt =	        tf.reshape(tf.io.parse_tensor(parsed_ex['jet_pt'],out_type=tf.float16),(-1,))
+    trackPar =	        tf.io.parse_tensor(parsed_ex['trackPar'],out_type=tf.float16)
+    trackProb =	        tf.io.parse_tensor(parsed_ex['trackProb'],out_type=tf.float16)
+    return ( (cluster_measured, jet_eta, jet_pt),(trackPar,trackProb) )
 
 # linear propagation to the 4 barrel layers, with plotting purpose only
 def prop_on_layer(x1,y1,eta,phi,eta_jet,lay) :
@@ -733,14 +731,14 @@ if TRAIN or PREDICT :
     activation='relu'
     conv30_9 = Conv2D(50,7, data_format="channels_last", input_shape=(jetDim,jetDim,layNum+2), activation=activation,padding="same")(ComplInput)
     conv30_7 = Conv2D(40,5, data_format="channels_last", activation=activation,padding="same")(conv30_9)
-    conv30_5 = Conv2D(40,5, data_format="channels_last", activation=activation,padding="same")(conv30_7)#
+    conv30_5 = Conv2D(40,5, data_format="channels_last", activation=activation,padding="same")(conv30_7)
     conv20_5 = Conv2D(30,5, data_format="channels_last", activation=activation,padding="same")(conv30_5)
     conv15_5 = Conv2D(30,3, data_format="channels_last", activation=activation,padding="same")(conv20_5)
 
     conv15_3_1 = Conv2D(18,3, data_format="channels_last",activation=activation, padding="same")(conv15_5)
     conv15_3_2 = Conv2D(18,3, data_format="channels_last",activation=activation, padding="same")(conv15_3_1)
     conv15_3_3 = Conv2D(18,3, data_format="channels_last",activation=activation, padding="same")(conv15_3_2) #(12,3)
-    conv15_3 = Conv2D(18,3, data_format="channels_last",padding="same")(conv15_3_3) #(12,3) #No activation!?
+    conv15_3 = Conv2D(18,3, data_format="channels_last",padding="same")(conv15_3_3) #(12,3)
 
     reshaped = Reshape((jetDim,jetDim,overlapNum,parNum+1))(conv15_3)
 
@@ -754,8 +752,7 @@ if TRAIN or PREDICT :
     
     model = Model([NNinputs,NNinputs_jeta,NNinputs_jpt],[reshaped,reshaped_prob])
     
-    # Made it easier to adjust learning rate
-    anubi = keras.optimizers.Adam(learning_rate=learning_rate)  #10-4
+    anubi = keras.optimizers.Adam(learning_rate=learning_rate)
     
     # Loss function adjustments:
     #model.compile(optimizer=anubi, loss=[loss_mse_select_clipped,loss_ROI_crossentropy], loss_weights=[1,1]) ##ROI FOR EARLY TRAINING
@@ -850,8 +847,8 @@ if TRAIN :
             history  = model.fit([input_,input_jeta,input_jpt], [target_,target_prob],  batch_size=batch_size, epochs=epochs+start_epoch, verbose = 2, validation_split=valSplit,  initial_epoch=start_epoch, callbacks=[checkpointer])            
     else : #full standard training
 
-        traindata= train.shuffle(buffer_size=4*batch_size).batch(batch_size).repeat().prefetch(tf.data.AUTOTUNE)
-        valdata = val.shuffle(buffer_size=4*batch_size).batch(batch_size).repeat().prefetch(tf.data.AUTOTUNE)
+        traindata = train.shuffle(buffer_size=16*batch_size).batch(batch_size).repeat().prefetch(tf.data.AUTOTUNE)
+        valdata = val.batch(batch_size).repeat().prefetch(tf.data.AUTOTUNE)
         
         trainingSteps=int(tot_events/batch_size)
         valSteps=int(tot_events_validation/batch_size)
@@ -946,51 +943,6 @@ if TRAIN :
       pylab.legend(['train', 'validation'], loc='upper right')
       pdf_loss.savefig(1002, bbox_inches='tight')
 
-## Old plotting script
-#        plt.figure(1000)
-#        plt.yscale('log')
-        ## pylab.plot(history.history['loss'])
-        ## pylab.plot(history.history['val_loss'])
-#        plt.plot(range(start_epoch,epochs+start_epoch),history.history['loss'])
-#        plt.plot(range(start_epoch,epochs+start_epoch),history.history['val_loss'])
-#        pylab.title('model loss')
-#        pylab.ylabel('loss')
-#        pylab.xlabel('epoch')
-#        plt.grid(True)
-#        pylab.legend(['train', 'test'], loc='upper right')
-#        pdf_loss.savefig(1000)
-
-#        plt.figure(1001)
-#        plt.yscale('log')
-        ## adjusting x axis so it starts from the epoch number from last training in case we continue training
-        ## pylab.plot(history.history['reshape_1_loss'])
-        ## pylab.plot(history.history['val_reshape_1_loss'])
-#        plt.plot(range(start_epoch,epochs+start_epoch),history.history['reshape_1_loss'])
-#        plt.plot(range(start_epoch,epochs+start_epoch),history.history['val_reshape_1_loss'])
-#        pylab.title('model loss (parameters)')
-#        pylab.ylabel('loss')
-#        pylab.xlabel('epoch')
-#        plt.grid(True)
-#        pylab.legend(['train', 'test'], loc='upper right')
-#        pdf_loss.savefig(1001)
-
-        ## Can't find reshape_3_loss in the training, only reshape 1 and
-        ## 2 availabe so we changed reshape_2 -> reshape_1 and reshape_3 ->
-        ## reshape_2
-#        plt.figure(1002)
-        # plt.yscale('log')
-        ## pylab.plot(history.history['reshape_2_loss'])
-        ## pylab.plot(history.history['val_reshape_2_loss'])
-#        plt.plot(range(start_epoch,epochs+start_epoch),history.history['reshape_2_loss'])
-#        plt.plot(range(start_epoch,epochs+start_epoch),history.history['val_reshape_2_loss'])
-#        pylab.title('model loss (probability)')
-#        pylab.ylabel('loss')
-#        pylab.xlabel('epoch')
-#        plt.grid(True)
-#        pylab.legend(['train', 'test'], loc='upper right')
-#        pdf_loss.savefig(1002)
-        
-
     if EXTRA_VALIDATION :
         plt.figure(1003)
         pylab.plot(efficiency_4)
@@ -1014,538 +966,691 @@ if TRAIN :
 
     pdf_loss.close()
 
-
-if PREDICT :
-
-    print("prediction: start")
-
-    if not TRAIN : #must be loaded previously produced weights, otherwise if you predict on the same sample of the training not needed
-        #Barrel training (used in presentation, CMSSW PR...)
-        ## model.load_weights('data/DeepCore_barrel_weights.246-0.87.hdf5')
-        model.load_weights('Training_1019_9k/Deepcore_train_weights1019.h5')
-        #EndCap training, last weights (not satisfactory, consider to restart)      
-        # model.load_weights('DeepCore_ENDCAP_train_ep150.h5')
-        #model.load_weights('DeepCore_train_ev{ev}_ep{ep}.h5'.format(ev=jetNum,ep=epochs+start_epoch)) 
-
-    [validation_par,validation_prob] = model.predict([input_,input_jeta,input_jpt])
-    validation_par = np.float64(validation_par)
-    np.savez("DeepCore_prediction_ev{ev}".format(ev=jetNum), validation_par=validation_par, validation_prob=validation_prob)
-
-    print("prediction: completed")
-
-
-
-#------------------------------------------------------------------------------------------#
-#------------------------------------- OUTPUT ROOT FILE -----------------------------------#
-#------------------------------------------------------------------------------------------#
-
-
-if OUTPUT :
-     if PREDICT == False  and (not DRAW_ONLY):
-
-        print("prediction loading: start")
-        loadpred = np.load("DeepCore_prediction_ev{ev}.npz".format(ev=jetNum))#106.4
-
-        validation_par = loadpred['validation_par']
-        validation_prob = loadpred['validation_prob']
-
-        print("prediction loading: completed")
-
-     if(not ON_DATA) :
-        target_prob = target_prob[:,:,:,:,:-1]
-     if (not DRAW_ONLY):
-        validation_prob = validation_prob[:,:,:,:,:-1]
-
-     import ROOT
-     from ROOT import gStyle
-     from ROOT import gROOT
-     gROOT.Reset()
-     gROOT.SetBatch(True)
-     gStyle.SetOptStat(0)
-     validation_offset=int(len(input_)*(1-valSplit)+1)
-
-     canvasTot = []
-     canvasProb = []
-
-     mapTot = []
-     graphTargetTot = []
-     mapProbPredTot = []
-     graphPredTot = []
-
-
-     for jet in range(numPrint) :
-
-         canvasTot_jet = []
-         mapTot_jet = []
-         graphTargetTot_jet = []
-         canvasProb_jet =[]
-         mapProbPredTot_jet =[]
-         graphPredTot_jet = []
-
-
-         for trk in range(overlapNum) :
-            canvasProb_jet.append(ROOT.TCanvas("canvasProb_%d_%d" % (jet,trk), "canvasProb_%d_%d" % (jet,trk),500,800))
-            mapProbPredTot_jet.append(ROOT.TH2F("mapProbPredTot_%d_%d" % (jet,trk), "mapProbPredTot_%d_%d" % (jet,trk), jetDim,-jetDim/2,jetDim/2,jetDim,-jetDim/2,jetDim/2))
-
-         for lay in range(layNum) :
-             mapTot_jet.append(ROOT.TH2F("mapTot_%d_%d" % (jet, lay), "mapTot_%d_%d" % (jet, lay), jetDim,-jetDim/2,jetDim/2,jetDim,-jetDim/2,jetDim/2))
-             canvasTot_jet.append(ROOT.TCanvas("canvasTot_%d_%d" % (jet, lay), "canvasTot_%d_%d" % (jet, lay),500,800))
-             graphTargetTot_jet.append(ROOT.TGraph())
-            #  graphPredTot_jet.append(ROOT.TGraph(overlapNum*3))
-             graphPredTot_jet.append(ROOT.TGraph())
-
-         mapTot.append(mapTot_jet)
-         canvasTot.append(canvasTot_jet)
-         graphTargetTot.append(graphTargetTot_jet)
-         mapProbPredTot.append(mapProbPredTot_jet)
-         canvasProb.append(canvasProb_jet)
-         graphPredTot.append(graphPredTot_jet)
-
-
-
-
-
-     for jet in range(numPrint) :
-         print("=================================== New Event ======================================")
-
-         j_eff = jet+validation_offset
-        #  j_eff = jet #WARNING, is this intended? 
-
-         #check if lay1 is broken
-         brokenLay_flag = False
-         brokenLay_cut = 0
-         for x in range(jetDim) :
-             for y in range(jetDim) :
-                if(input_[j_eff][x][y][1] > 0.0001) :
-                    brokenLay_flag = True
-         if(not brokenLay_flag) :
-            brokenLay_cut = 0.35
-
-         # fill the histos   
-         for lay in range(layNum) :
-             tarPoint = 0
-             predPoint = 0
-             graphPredTot[jet][lay].SetMarkerColor(7)
-             graphPredTot[jet][lay].SetMarkerStyle(28)
-             graphPredTot[jet][lay].SetMarkerSize(3)
-             graphTargetTot[jet][lay].SetMarkerColor(6)
-             graphTargetTot[jet][lay].SetMarkerStyle(2)
-             graphTargetTot[jet][lay].SetMarkerSize(3)
-             for x in range(jetDim) :
-                 for y in range(jetDim) :
-                     mapTot[jet][lay].SetBinContent(x+1,y+1,input_[j_eff][x][y][lay])
-                     if(input_[j_eff][x][y][lay]>0) : print("input pixel:", "(x,y)=",x,y, ", layer=",lay, ", value=", input_[j_eff][x][y][lay])
-                     for trk in range(overlapNum) :
-                        if not DRAW_ONLY : 
-                            mapProbPredTot[jet][trk].SetBinContent(x+1,y+1,validation_prob[j_eff][x][y][trk])
-                        if(not ON_DATA) :
-                            if target_prob[j_eff][x][y][trk] == 1 and lay==1:
-                                xx= float(target_[j_eff][x][y][trk][0])/float(0.01)*0.01#normaliz. factor
-                                yy= float(target_[j_eff][x][y][trk][1])/float(0.015)*0.01
-                                graphTargetTot[jet][lay].SetPoint(tarPoint,x+xx-jetDim/2,y+yy-jetDim/2)
-
-                                x0,y0 = prop_on_layer(x+xx-jetDim/2, y+yy-jetDim/2,target_[j_eff][x][y][trk][2]*0.01,target_[j_eff][x][y][trk][3]*0.01,input_jeta[j_eff],0)
-                                x2,y2 = prop_on_layer(x+xx-jetDim/2, y+yy-jetDim/2,target_[j_eff][x][y][trk][2]*0.01,target_[j_eff][x][y][trk][3]*0.01,input_jeta[j_eff],2)
-                                x3,y3 = prop_on_layer(x+xx-jetDim/2, y+yy-jetDim/2,target_[j_eff][x][y][trk][2]*0.01,target_[j_eff][x][y][trk][3]*0.01,input_jeta[j_eff],3)
-                                graphTargetTot[jet][0].SetPoint(tarPoint,x0,y0)
-                                graphTargetTot[jet][2].SetPoint(tarPoint,x2,y2)
-                                graphTargetTot[jet][3].SetPoint(tarPoint,x3,y3)
-                                tarPoint = tarPoint+1
-                        if not DRAW_ONLY :
-                            if validation_prob[j_eff][x][y][trk] > (prob_thr-0.1*trk-brokenLay_cut) and lay==1 : #and   target_prob[j_eff][x][y][trk] == 1: #this is an useful option to debug
-                                xx_pr= float(validation_par[j_eff][x][y][trk][0])/float(0.01)*0.01
-                                yy_pr= float(validation_par[j_eff][x][y][trk][1])/float(0.015)*0.01
-                                graphPredTot[jet][lay].SetPoint(predPoint,x+xx_pr-jetDim/2,y+yy_pr-jetDim/2)
-
-                                x0,y0 = prop_on_layer(x+xx_pr-jetDim/2, y+yy_pr-jetDim/2,validation_par[j_eff][x][y][trk][2]*0.01,validation_par[j_eff][x][y][trk][3]*0.01,input_jeta[j_eff],0)
-                                x2,y2 = prop_on_layer(x+xx_pr-jetDim/2, y+yy_pr-jetDim/2,validation_par[j_eff][x][y][trk][2]*0.01,validation_par[j_eff][x][y][trk][3]*0.01,input_jeta[j_eff],2)
-                                x3,y3 = prop_on_layer(x+xx_pr-jetDim/2, y+yy_pr-jetDim/2,validation_par[j_eff][x][y][trk][2]*0.01,validation_par[j_eff][x][y][trk][3]*0.01,input_jeta[j_eff],3)
-                                graphPredTot[jet][0].SetPoint(predPoint,x0,y0)
-                                graphPredTot[jet][2].SetPoint(predPoint,x2,y2)
-                                graphPredTot[jet][3].SetPoint(predPoint,x3,y3)
-                                predPoint = predPoint+1
-
-                                print("________________________________________")
-                                print("New Pred, bin (x,y):",x-jetDim/2,y-jetDim/2)
-                                if(not ON_DATA):
-                                    print("target(x,y,eta,phi)=",target_[j_eff][x][y][trk][0]," ", target_[j_eff][x][y][trk][1]," ",target_[j_eff][x][y][trk][2]," ",target_[j_eff][x][y][trk][3]," ",target_[j_eff][x][y][trk][4],"Probabiity target=", target_prob[j_eff][x][y][trk])
-                                    print("prediction(x,y,eta,phi)=",validation_par[j_eff][x][y][trk][0]," ", validation_par[j_eff][x][y][trk][1]," ",validation_par[j_eff][x][y][trk][2]," ",validation_par[j_eff][x][y][trk][3]," ",validation_par[j_eff][x][y][trk][4], "Probabiity pred=", validation_prob[j_eff][x][y][trk])
-                                    print(" x0,y0=",x0,y0," x2,y2=",x2,y2," x3,y3=",x3,y3,)
-
-
-     output_file = ROOT.TFile("DeepCore_mapValidation_ev{ev}.root".format(ev=jetNum),"recreate")
-     from array import array as array2
-
-     if(RGB) : #set the color scheme
-
-         NCont=10
-
-         array_of_palette = []
-         palette = []
-
-         Red =[1.,1.]
-         Green =[1.,0.]
-         Blue =[1.,0.]
-         Stops =[0.,1.]
-         StopsArray = array2('d', Stops)
-         RedArray = array2('d', Red)
-         GreenArray = array2('d', Green)
-         BlueArray = array2('d', Blue)
-         FI = TColor.CreateGradientColorTable(2, StopsArray, RedArray, GreenArray, BlueArray, NCont)
-         for i in range(0,NCont) :
-             palette.append(FI+i)
-         paletteArray = array2('i',palette)
-         palette[:]=[]
-         array_of_palette.append(paletteArray)
-
-
-         Red =[1.,0.]
-         Green =[1.,0.]
-         Blue =[1.,0.]
-         Stops =[0.,1.]
-         StopsArray = array2('d', Stops)
-         RedArray = array2('d', Red)
-         GreenArray = array2('d', Green)
-         BlueArray = array2('d', Blue)
-         FI = TColor.CreateGradientColorTable(2, StopsArray, RedArray, GreenArray, BlueArray, NCont)
-         for i in range(0,NCont) :
-             palette.append(FI+i)
-         paletteArray = array2('i',palette)
-         palette[:]=[]
-         array_of_palette.append(paletteArray)
-
-         Red =[1.,0]
-         Green =[1.,1]
-         Blue =[1.,0.]
-         Stops =[0.,1.]
-         StopsArray = array2('d', Stops)
-         RedArray = array2('d', Red)
-         GreenArray = array2('d', Green)
-         BlueArray = array2('d', Blue)
-         FI = TColor.CreateGradientColorTable(2, StopsArray, RedArray, GreenArray, BlueArray, NCont)
-         for i in range(0,NCont) :
-             palette.append(FI+i)
-         paletteArray = array2('i',palette)
-         palette[:]=[]
-         array_of_palette.append(paletteArray)
-
-         Red =[1.,0.]
-         Green =[1.,0.]
-         Blue =[1.,1.]
-         Stops =[0.,1.]
-         StopsArray = array2('d', Stops)
-         RedArray = array2('d', Red)
-         GreenArray = array2('d', Green)
-         BlueArray = array2('d', Blue)
-         FI = TColor.CreateGradientColorTable(2, StopsArray, RedArray, GreenArray, BlueArray, NCont)
-         for i in range(0,NCont) :
-             palette.append(FI+i)
-         paletteArray = array2('i',palette)
-         palette[:]=[]
-         array_of_palette.append(paletteArray)
-
-     # build the cavases
-     for jet in range(numPrint) :
-
-         #check if lay1 is broken!
-         brokenLay_flag = False
-         brokenLay_cut = 0
-         for x in range(jetDim) :
-             for y in range(jetDim) :
-                if(input_[jet][x][y][1] > 0.0001) :
-                    brokenLay_flag = True
-         if(not brokenLay_flag) :
-            brokenLay_cut = 0.35
-
-         for lay in range(layNum) :
-             canvasTot[jet][lay].cd()
-             mapTot[jet][lay].GetXaxis().SetRangeUser(-jetDim,jetDim)
-             mapTot[jet][lay].GetYaxis().SetRangeUser(-jetDim,jetDim)
-            #  mapTot[jet][lay].SetTitle("Pixel Map, cluster %d, layer %d, pt=%f, eta=%f" % (jet, lay+1, input_jpt[jet],input_jeta[jet]))
-             mapTot[jet][lay].SetTitle("Pixel Window, layer %d" % (lay+1))
-             mapTot[jet][lay].GetXaxis().SetTitle("x [pixel]")
-             mapTot[jet][lay].GetYaxis().SetTitle("y [pixel]")
-             mapTot[jet][lay].GetYaxis().SetTitleOffset(1)
-             mapTot[jet][lay].GetZaxis().SetTitle("ADC count [/14k]")
-             mapTot[jet][lay].GetZaxis().SetTitleOffset(-1.05)
-             mapTot[jet][lay].GetXaxis().SetTitleSize(0.06)
-             mapTot[jet][lay].GetYaxis().SetTitleSize(0.06)
-             mapTot[jet][lay].GetZaxis().SetTitleSize(0.04)
-             mapTot[jet][lay].GetXaxis().SetTitleOffset(0.7)
-             mapTot[jet][lay].GetYaxis().SetTitleOffset(0.6)
-
-             latexCMS = ROOT.TLatex()
-
-
-             if(not RGB) :
-                 mapTot[jet][lay].Draw("colz")
-
-                 latexCMS.SetTextSize(0.05)
-                 latexCMS.DrawLatex(-16.2,16.2,"#bf{#bf{CMS}} #scale[0.7]{#bf{#it{Simulation Preliminary}}}")
-                 latexCMS.DrawLatex(12,16.2,"#bf{13 TeV}")
-
-             else :
-                 gStyle.SetPalette(NCont,array_of_palette[lay])
-                 mapTot[jet][lay].Draw("colz")
-
-                 latexCMS.SetTextSize(0.05)
-                 latexCMS.DrawLatex(-16.2,16.2,"#bf{#bf{CMS}} #scale[0.7]{#bf{#it{Simulation Preliminary}}}")
-                 latexCMS.DrawLatex(12,16.2,"#bf{13 TeV}")
-
-             if(jet==outEvent and RGB):
-
-
-                 mapTot[jet][lay].GetZaxis().SetRangeUser(0,2.7)
-                 canvasTot[jet][lay].SaveAs("RGB_PixelMap_input_layer%d_event%d.pdf" % (lay,jet))
-                 canvasTot[jet][lay].SaveAs("RGB_PixelMap_input_layer%d_event%d.png" % (lay,jet))
-
-             if (not ON_DATA) :
-                 graphTargetTot[jet][lay].Draw("SAME P")
-             graphPredTot[jet][lay].Draw("SAME P")
-
-             graphTargetTot[jet][lay].SetLineColor(0)
-             graphPredTot[jet][lay].SetLineColor(0)
-             graphTargetTot[jet][lay].SetFillColor(0)
-             graphPredTot[jet][lay].SetFillColor(0)
-
-             latexCMS.SetTextSize(0.05)
-             latexCMS.DrawLatex(-16.2,16.2,"#bf{#bf{CMS}} #scale[0.7]{#bf{#it{Simulation Preliminary}}}")
-             latexCMS.DrawLatex(12,16.2,"#bf{13 TeV}")
-
-
-
-             legTot = ROOT.TLegend(0.1,0.9,0.3,0.8);
-             if (not ON_DATA) :
-                 legTot.AddEntry(graphTargetTot[jet][lay], "Target")
-             legTot.AddEntry(graphPredTot[jet][lay], "Prediction")
-             legTot.SetTextSize(0.03);
-             legTot.Draw("SAME")
-
-             canvasTot[jet][lay].Write()
-
-             if(jet==outEvent and RGB):
-                 canvasTot[jet][lay].SaveAs("RGB_PixelMap_crosses_layer%d_event%d.pdf" % (lay,jet))
-                 canvasTot[jet][lay].SaveAs("RGB_PixelMap_crosses_layer%d_event%d.png" % (lay,jet))
-
-         for trk in range(overlapNum) :
-             canvasProb[jet][trk].cd()
-             mapProbPredTot[jet][trk].GetXaxis().SetRangeUser(-jetDim,jetDim)
-             mapProbPredTot[jet][trk].GetYaxis().SetRangeUser(-jetDim,jetDim)
-             gStyle.SetPalette(57)
-             mapProbPredTot[jet][trk].Draw("colz")
-             mapProbPredTot[jet][trk].GetXaxis().SetTitle("x [pixel]")
-             mapProbPredTot[jet][trk].GetYaxis().SetTitle("y [pixel]")
-             mapProbPredTot[jet][trk].GetYaxis().SetTitleOffset(1.2)
-            #  mapProbPredTot[jet][trk].SetTitle("TCP Prediction Map, cluster %d, overlap %d" % (jet, trk))
-             mapProbPredTot[jet][trk].SetTitle("TCP Prediction Map, overlap %d" % (trk))
-             mapProbPredTot[jet][trk].GetZaxis().SetTitle("Probability")
-             mapProbPredTot[jet][trk].GetZaxis().SetTitleOffset(-1.05)
-             mapProbPredTot[jet][trk].GetXaxis().SetTitleSize(0.06)
-             mapProbPredTot[jet][trk].GetYaxis().SetTitleSize(0.06)
-             mapProbPredTot[jet][trk].GetXaxis().SetTitleOffset(0.7)
-             mapProbPredTot[jet][trk].GetYaxis().SetTitleOffset(0.6)
-             if (not ON_DATA) :
-                 graphTargetTot[jet][1].Draw("SAME P")
-             graphPredTot[jet][1].Draw("SAME P")
-
-             latexCMS.SetTextSize(0.05)
-             latexCMS.DrawLatex(-16.2,16.2,"#bf{#bf{CMS}} #scale[0.7]{#bf{#it{Simulation Preliminary}}}")
-             latexCMS.DrawLatex(12,16.2,"#bf{13 TeV}")
-
-
-             legProb = ROOT.TLegend(0.1,0.9,0.3,0.8);
-             if (not ON_DATA) :
-                legProb.AddEntry(graphTargetTot[jet][1], "Target")
-             legProb.AddEntry(graphPredTot[jet][1], "Prediction")
-             legProb.SetTextSize(0.03);
-             legProb.Draw("SAME")
-
-             mapProbPredTot[jet][0].GetZaxis().SetRangeUser(0,1)
-             canvasProb[jet][trk].Write()
-
-         if(jet==outEvent and RGB):
-             canvasProb[jet][0].SaveAs("Probabiltiy_crosses_event%d.pdf" % (jet))#.png
-             canvasProb[jet][0].SaveAs("Probabiltiy_crosses_event%d.png" % (jet))#.png
-
-     output_file.Close()
-
-     #plot of parameters distributions and residuals
-     if(not ON_DATA) : 
-         print("parameter file: start looping")
-         pdf_par = mpl.backends.backend_pdf.PdfPages("parameter_file_ev{ev}.pdf".format(ev=jetNum))
-
-         for par in range(parNum) :
-             bins = []# np.zeros(shape=(int(jetNum*valSplit)))
-             bins_pred = []
-             bins_target = []
-             nbin =0
-             n_sig_ok = 0
-             for j in range (int(len(input_))) :
-                 j_eff = j
-                #  j_eff=j+validation_offset use this if you want to avoid to fill the histos with the event used in the training, but you have also to change the j range()
-                 for x in range(jetDim) :
-                     for y in range(jetDim) :
-                         for trk in range(overlapNum) :
-                             if target_prob[j_eff][x][y][trk] == 1 :
-                            #  if validation_prob[j_eff][x][y][trk] > prob_thr-0.1*trk-brokenLay_cut  and target_prob[j_eff][x][y][trk] == 1:# only "associated" 
-                                     if(par!=4) :
-                                         if not DRAW_ONLY : bins.append((validation_par[j_eff][x][y][trk][par] - target_[j_eff][x][y][trk][par])*0.01)
-                                         if not DRAW_ONLY : bins_pred.append(validation_par[j_eff][x][y][trk][par]*0.01)
-                                         bins_target.append(target_[j_eff][x][y][trk][par]*0.01)
-                                     else :
-                                         if not DRAW_ONLY : bins.append((validation_par[j_eff][x][y][trk][par] - target_[j_eff][x][y][trk][par])/target_[j_eff][x][y][trk][par])  #relative
-                                         if not DRAW_ONLY :  bins_pred.append(validation_par[j_eff][x][y][trk][par])
-                                         bins_target.append(target_[j_eff][x][y][trk][par])
-                                     nbin = nbin+1
-                                     if not DRAW_ONLY :
-                                          if(validation_par[j_eff][x][y][trk][par]*target_[j_eff][x][y][trk][par]>0) : #same Sign
-                                            n_sig_ok = n_sig_ok+1
-             if nbin>0 :
-                 fracsig=n_sig_ok/float(nbin)
-             else :
-                 fracsig = 0
-             print("Parameter {PAR}, number of correct sign={n}, fraction={f}".format(PAR=par, n=n_sig_ok, f=fracsig))
-             plt.figure()
-             if(par!=4) :
-                 pylab.hist(bins,70, facecolor='darkorange', alpha=0.75, range=(-0.03,0.03))
-             else :
-                 pylab.hist(bins,200, facecolor='darkorange', alpha=0.75, range=(-2,5))#range=(-0.2,0.2))#range=(-2,5)) #relative
-             if(par == 0) :
-                 pylab.title('Residual distribution - x',fontsize=22)
-             if(par == 1) :
-                 pylab.title('Residual distribution - y',fontsize=22)
-             if(par == 2) :
-                 pylab.title('Residual distribution - $\eta$',fontsize=22)
-                 plt.text(-0.032,1030, "CMS ", weight='bold', size=17)
-                 plt.text(-0.032,950, "Simulation Preliminary", style='italic', size=14)
-                 plt.text(0.0215,1030, "13 TeV", size = 17)
-                 plt.text(0.0025,915, r'QCD events ($\langle PU \rangle=30$)',size=14)
-                 plt.text(0.0025,830,r'1.8 TeV $<\hat p_T<$2.4 TeV',size=14)
-                 plt.text(0.0025,745,r'$p_T^{jet}>1$ TeV, $|\eta^{jet}|<1.4$',size=14)
-                 if not DRAW_ONLY : mean = np.array(bins).mean()
-                 if not DRAW_ONLY : sigma = np.array(bins).std()
-                #if not DRAW_ONLY :  plt.text(0.009, 550, "Mean =%f"%(mean), size=14)
-                 if not DRAW_ONLY : plt.text(0.0145, 465, "$\sigma_{res}$ = %.3f"%(sigma), size=14)
-
-             if(par == 3) :
-                 pylab.title('Residual distribution - $\phi$',fontsize=22)
-             if(par == 4) :
-                 pylab.title('Residual distribution - $p_T$',fontsize=22)
-             pylab.ylabel('Events/0.0008',fontsize=18)
-             pylab.xlabel('(prediction-target)/target',fontsize=18) #only 1/pt
-             if(par==0 or par==1) : #relative
-                 pylab.xlabel('prediction-target [cm]',fontsize=22)
-             elif(par==2 or par==3) : #relative
-                 pylab.xlabel('prediction-target',fontsize=22)
-            #  else : #relative
-            #      pylab.xlabel('prediction-target [1/GeV]',fontsize=22)
-
-             plt.grid(True)
-             if(RGB) :
-                 pylab.savefig("residual_{jj}_{PAR}.pdf".format(PAR=par,jj=jetNum))#.png
-                 pylab.savefig("residual_{jj}_{PAR}.png".format(PAR=par,jj=jetNum))#.png
-
-             pdf_par.savefig()
-
-             plt.figure()
-             if(par!=4) :
-                 pylab.hist(bins_target,70, facecolor='royalblue', alpha=0.75, range=(-0.03,0.03))
-             else :
-                 pylab.hist(bins_target,100, facecolor='royalblue', alpha=0.75, range=(-0,0.2))
-
-             if(par == 0) :
-                 pylab.title('Target distribution - x',fontsize=22)
-             if(par == 1) :
-                 pylab.title('Target distribution - y',fontsize=22)
-             if(par == 2) :
-                 pylab.title('Target distribution - $\eta$',fontsize=22)
-             if(par == 3) :
-                 pylab.title('Target distribution - $\phi$',fontsize=22)
-             if(par == 4) :
-                 pylab.title('Target distribution - $p_T$',fontsize=22)
-             if(par==0 or par==1) :
-                 pylab.xlabel('target [cm]',fontsize=18)
-             elif(par==2 or par==3) :
-                 pylab.xlabel('target',fontsize=18)
-             else :
-                 pylab.xlabel('prediction-target [1/GeV]',fontsize=18)
-             pylab.ylabel('entries',fontsize=18)
-             plt.grid(True)
-             if(RGB) :
-                 pylab.savefig("target_{jj}_{PAR}.pdf".format(PAR=par,jj=jetNum))#.png
-                 pylab.savefig("target_{jj}_{PAR}.png".format(PAR=par,jj=jetNum))#.png
-
-             pdf_par.savefig()
-
-             plt.figure()
-             if(par!=4) :
-                 pylab.hist(bins_pred,70, facecolor='red', alpha=0.75, range=(-0.03,0.03))
-             else :
-                 pylab.hist(bins_pred,200, facecolor='red', alpha=0.75, range=(-0.2,0.2))
-
-             if(par == 0) :
-                 pylab.title('Prediction distribution - x',fontsize=22)
-             if(par == 1) :
-                 pylab.title('Prediction distribution - y',fontsize=22)
-             if(par == 2) :
-                 pylab.title('Prediction distribution - $\eta$',fontsize=22)
-             if(par == 3) :
-                 pylab.title('Prediction distribution - $\phi$',fontsize=22)
-             if(par == 4) :
-                 pylab.title('Prediction distribution - $p_T$',fontsize=22)
-             if(par==0 or par==1) :
-                 pylab.xlabel('prediction [cm]',fontsize=18)
-             elif(par==2 or par==3) :
-                 pylab.xlabel('prediction',fontsize=18)
-             else :
-                 pylab.xlabel('prediction-target [1/GeV]',fontsize=18)
-             pylab.ylabel('entries',fontsize=18)
-             plt.grid(True)
-             if(RGB) :
-                 pylab.savefig("prediction_{jj}_{PAR}.pdf".format(PAR=par,jj=jetNum))#.png
-                 pylab.savefig("prediction_{jj}_{PAR}.png".format(PAR=par,jj=jetNum))#.png
-
-             pdf_par.savefig()
-
-             #scatter plot
-             if(not DRAW_ONLY) :
-                 plt.figure()
-                 if(par == 0) :
-                     plt.hist2d(bins_pred,bins_target,bins=50,range = [[-0.015, 0.015], [-0.015, 0.015]], cmap=plt.cm.viridis)#, marker='+')
-                     plt.xlabel('x prediction [cm]')
-                     plt.ylabel('x target [cm]')
-                     plt.colorbar()
-                 if(par == 1) :
-                     plt.hist2d(bins_pred,bins_target,bins=50,range = [[-0.02, 0.02], [-0.02, 0.02]], cmap=plt.cm.viridis)
-                     plt.xlabel('y prediction [cm]')
-                     plt.ylabel('y target [cm]')
-                     plt.colorbar()
-                 if(par == 2) :
-                     plt.hist2d(bins_pred,bins_target,bins=50,range = [[-0.03, 0.03], [-0.03, 0.03]], cmap=plt.cm.viridis)
-                     plt.xlabel('$\eta$ prediction', fontsize=18, labelpad=-5)
-                     plt.ylabel('$\eta$ target', fontsize=18, labelpad=-5)
-                     plt.colorbar()
-                     plt.text(-0.029,0.026, "CMS ", weight='bold', size=17, color="white")
-                     plt.text(-0.029,0.023, "Simulation Preliminary", style='italic', size=14, color="white")
-                     plt.text(0.017,0.026, "13 TeV", size = 17,color="white")
-                     plt.text(-0.005,-0.015, r'QCD events ($\langle PU \rangle=30$)',size=14,color="white")
-                     plt.text(-0.005,-0.02,r'1.8 TeV $<\hat p_T<$2.4 TeV',size=14,color="white")
-                     plt.text(-0.005,-0.025,r'$p_T^{jet}>1$ TeV, $|\eta^{jet}|<1.4$',size=14,color="white")
-
-
-                 if(par == 3) :
-                     plt.hist2d(bins_pred,bins_target,bins=50,range = [[-0.03, 0.03], [-0.03, 0.03]], cmap=plt.cm.viridis)
-                     plt.xlabel('$\phi$ prediction')
-                     plt.ylabel('$\phi$ target')
-                     plt.colorbar()
-                 if(par == 4) :
-                     plt.hist2d(bins_pred,bins_target,bins=30,range = [[0, 0.15], [0, 0.15]])
-                     plt.xlabel('$p_T$ prediction [1/GeV]')
-                     plt.ylabel('$p_T$ target [1/GeV]')
-                     plt.colorbar()
-                 if(RGB) :
-                     pylab.savefig("predVStarget_{jj}_{PAR}.pdf".format(PAR=par,jj=jetNum))#.png
-                     pylab.savefig("predVStarget_{jj}_{PAR}.png".format(PAR=par,jj=jetNum))#.png
-
-                 pdf_par.savefig()
-         pdf_par.close()
+if PREDICT:
+
+    #me!
+    model.load_weights("/afs/cern.ch/work/n/nihaubri/private/DeepCoreTraining/DeepCore/Condor_GPUs/DeepCore_train_ev8069968_ep30.h5")
+    #from hichem
+    #model.load_weights("/afs/cern.ch/work/n/nihaubri/private/DeepCoreTraining/DeepCore/DeepCore_model_23_0622.h5")
+
+    testGenerator = Generator2("/eos/user/n/nihaubri/DeepCore_data/latest/TestingSamples/*root",batch_size=1024,loop=False)
+    #testGenerator = Generator2("/eos/user/n/nihaubri/DeepCore_data/latest/TrainingSamples/training/*root",batch_size=1024,loop=False)
+    
+    #first, TCP distributions
+    batch = next(testGenerator)
+    y_true = [batch[1][0],batch[1][1]]
+
+    #batch = train.batch(1024).take(1).get_single_element()
+    #y_true = [batch[1][0].numpy(),batch[1][1].numpy()]
+    
+    y_pred = model.predict(batch[0])
+    tp_pred = y_pred[0]
+    tcp_pred = y_pred[1] #Nx30x30,3,2
+    tp_truth = y_true[0]
+    tcp_truth = y_true[1]
+
+    tcp_sig_scores = tcp_pred[tcp_truth[:,:,:,:,0]==1][:,0]
+    tcp_bkg_scores = tcp_pred[tcp_truth[:,:,:,:,0]==0][:,0]
+
+    xmin,xmax,bins= 0,1,50
+    fig, axs = plt.subplots(2,2)
+    fig.suptitle("Prediction Score Distribution")
+
+    fig.tight_layout()
+    axs[0,0].hist(tcp_sig_scores,label='sig',color='blue',histtype='step',range=(xmin,xmax),bins=bins)
+    axs[0,0].hist(tcp_bkg_scores,label='bkg',color='red',histtype='step',range=(xmin,xmax),bins=bins)
+    axs[0,0].set_yscale("log")
+    axs[0,0].set_ylim(ymin=0.5)
+    axs[0,0].legend()
+    axs[0,0].set_title(" Inclusive")
+
+    tcp_sig_scores = tcp_pred[tcp_truth[:,:,:,0,0]==1][:,0,0]
+    tcp_bkg_scores = tcp_pred[tcp_truth[:,:,:,0,0]==0][:,0,0]
+    axs[0,1].hist(tcp_sig_scores,label='sig',color='blue',histtype='step',range=(xmin,xmax),bins=bins)
+    axs[0,1].hist(tcp_bkg_scores,label='bkg',color='red',histtype='step',range=(xmin,xmax),bins=bins)
+    axs[0,1].set_title(" First Seed")
+    axs[0,1].set_ylim(ymin=0.5)
+    axs[0,1].set_yscale("log")
+
+    tcp_sig_scores = tcp_pred[tcp_truth[:,:,:,1,0]==1][:,1,0]
+    tcp_bkg_scores = tcp_pred[tcp_truth[:,:,:,1,0]==0][:,1,0]
+    axs[1,0].hist(tcp_sig_scores,label='sig',color='blue',histtype='step',range=(xmin,xmax),bins=bins)
+    axs[1,0].hist(tcp_bkg_scores,label='bkg',color='red',histtype='step',range=(xmin,xmax),bins=bins)
+    axs[1,0].set_title(" Second Seed")
+    axs[1,0].set_ylim(ymin=0.5)
+    axs[1,0].set_yscale("log")
+
+    tcp_sig_scores = tcp_pred[tcp_truth[:,:,:,2,0]==1][:,2,0]
+    tcp_bkg_scores = tcp_pred[tcp_truth[:,:,:,2,0]==0][:,2,0]
+    axs[1,1].hist(tcp_sig_scores,label='sig',color='blue',histtype='step',range=(xmin,xmax),bins=bins)
+    axs[1,1].hist(tcp_bkg_scores,label='bkg',color='red',histtype='step',range=(xmin,xmax),bins=bins)
+    axs[1,1].set_title(" Third Seed")
+    axs[1,1].set_ylim(ymin=0.5)
+    axs[1,1].set_yscale("log")
+
+    plt.savefig("tcp_scores.png")
+    plt.close()
+    
+    from sklearn.metrics import roc_curve,auc
+    tcp_truth_1d = tcp_truth[:,:,:,:,0].ravel()
+    tcp_pred_1d = tcp_pred[:,:,:,:,0].ravel()
+    fpr,tpr, _ = roc_curve(tcp_truth_1d,tcp_pred_1d)
+    auc_incl = auc(fpr,tpr)
+
+    plt.plot(fpr, tpr,label='Inclusive, auc={:.3f}'.format(auc_incl))
+    plt.title("ROC")
+    plt.xlabel("False Positive Rate")
+    plt.ylabel("True Positive Rate")
+
+
+    for i,label in zip([0,1,2],["Seed #1","Seed #2","Seed #3"]):
+        tcp_truth_1d = y_true[1][:,:,:,i,0].ravel()
+        tcp_pred_1d = tcp_pred[:,:,:,i,0].ravel()
+        fpr,tpr, _ = roc_curve(tcp_truth_1d,tcp_pred_1d)
+        this_auc = auc(fpr,tpr)
+        plt.plot(fpr, tpr,label="{}, auc={:.3f}".format(label,this_auc))
+    plt.legend(loc='center right')
+    plt.savefig("ROC.png")
+    
+    #ok, now parameter plots. If y_truth is true, make hists and 2d
+  
+    bin_dict = {
+            "dx": np.linspace(-2,2,100),
+            "dy": np.linspace(-2,2,100),
+            "eta": np.linspace(-5,5,100),
+            "phi": np.linspace(-5,5,100),
+            "pt": np.linspace(-100,500,120),
+            "zero_flag": np.linspace(0,2,100)
+    }
+    predhists = {}
+    truehists = {}
+    residualhists = {}
+    mse={}
+    for var in bin_dict.keys():
+        predhists[var] = np.zeros(len(bin_dict[var])-1)
+        truehists[var] = np.zeros(len(bin_dict[var])-1)
+        residualhists[var] = np.zeros(len(bin_dict[var])-1)
+        mse[var]=[]
+
+    for i in range(100):
+        
+        batch = train.batch(1024).take(1).get_single_element()
+        
+        y_true = [batch[1][0].numpy(),batch[1][1].numpy()]
+        y_pred = model.predict(batch[0],verbose=0)
+        tp_pred = y_pred[0]
+        tcp_pred = y_pred[1] #Nx30x30,3,2
+        tp_truth = y_true[0]
+        tcp_truth = y_true[1]
+       
+        preds=tp_pred[tcp_truth[:,:,:,:,0]==1]
+        truths=tp_truth[tcp_truth[:,:,:,:,0]==1]
+        for i,var in zip([0,1,2,3,4,5],["dx","dy","eta","phi","pt","zero_flag"]):
+            htmp, _ = np.histogram(preds[:,i],bin_dict[var])
+            predhists[var]+= htmp
+            
+            htmp, _ = np.histogram(truths[:,i],bin_dict[var])
+            truehists[var]+= htmp
+
+            htmp, _ = np.histogram(truths[:,i]-preds[:,i],bin_dict[var])
+            residualhists[var] += htmp
+            mse[var].append( np.sum((truths[:,i]-preds[:,i])**2)/len(preds[:,i]) )
+    
+    for var in bin_dict.keys():
+        mse_val = sum(mse[var])/len(mse[var])
+        #import pdb
+        #pdb.set_trace()
+        predvals =predhists[var]
+        truevals = truehists[var]
+        residuals=residualhists[var]
+        edges = bin_dict[var]
+        fig, axs = plt.subplots(2)
+        #ax.bar(edges[:-1], vals, width=np.diff(edges), edgecolor="black", align="edge")
+        axs[0].hist(edges[:-1],bins=edges,weights=truevals,histtype='step',label='target')
+        axs[0].hist(edges[:-1],bins=edges,weights=predvals,histtype='step',label='predicted')
+        axs[0].set_title(var)
+        axs[0].set_yscale("log")
+        axs[0].legend()
+        axs[0].set_xlabel(var)
+        
+        axs[1].hist(edges[:-1],bins=edges,weights=residualhists[var],histtype='step',color='xkcd:forest',label='MSE: {:3f}'.format(mse_val))
+        axs[1].legend()
+        axs[1].set_xlabel("target-predicted")
+        plt.tight_layout()
+        plt.savefig(var+".png")
+
+
+#if PREDICT :
+#
+#    print("prediction: start")
+#
+#    if not TRAIN : #must be loaded previously produced weights, otherwise if you predict on the same sample of the training not needed
+#        #Barrel training (used in presentation, CMSSW PR...)
+#        ## model.load_weights('data/DeepCore_barrel_weights.246-0.87.hdf5')
+#        model.load_weights('Training_1019_9k/Deepcore_train_weights1019.h5')
+#        #EndCap training, last weights (not satisfactory, consider to restart)      
+#        # model.load_weights('DeepCore_ENDCAP_train_ep150.h5')
+#        #model.load_weights('DeepCore_train_ev{ev}_ep{ep}.h5'.format(ev=jetNum,ep=epochs+start_epoch)) 
+#
+#    [validation_par,validation_prob] = model.predict([input_,input_jeta,input_jpt])
+#    validation_par = np.float64(validation_par)
+#    np.savez("DeepCore_prediction_ev{ev}".format(ev=jetNum), validation_par=validation_par, validation_prob=validation_prob)
+#
+#    print("prediction: completed")
+#
+#
+#
+##------------------------------------------------------------------------------------------#
+##------------------------------------- OUTPUT ROOT FILE -----------------------------------#
+##------------------------------------------------------------------------------------------#
+#
+#
+#if OUTPUT :
+#     if PREDICT == False  and (not DRAW_ONLY):
+#
+#        print("prediction loading: start")
+#        loadpred = np.load("DeepCore_prediction_ev{ev}.npz".format(ev=jetNum))#106.4
+#
+#        validation_par = loadpred['validation_par']
+#        validation_prob = loadpred['validation_prob']
+#
+#        print("prediction loading: completed")
+#
+#     if(not ON_DATA) :
+#        target_prob = target_prob[:,:,:,:,:-1]
+#     if (not DRAW_ONLY):
+#        validation_prob = validation_prob[:,:,:,:,:-1]
+#
+#     import ROOT
+#     from ROOT import gStyle
+#     from ROOT import gROOT
+#     gROOT.Reset()
+#     gROOT.SetBatch(True)
+#     gStyle.SetOptStat(0)
+#     validation_offset=int(len(input_)*(1-valSplit)+1)
+#
+#     canvasTot = []
+#     canvasProb = []
+#
+#     mapTot = []
+#     graphTargetTot = []
+#     mapProbPredTot = []
+#     graphPredTot = []
+#
+#
+#     for jet in range(numPrint) :
+#
+#         canvasTot_jet = []
+#         mapTot_jet = []
+#         graphTargetTot_jet = []
+#         canvasProb_jet =[]
+#         mapProbPredTot_jet =[]
+#         graphPredTot_jet = []
+#
+#
+#         for trk in range(overlapNum) :
+#            canvasProb_jet.append(ROOT.TCanvas("canvasProb_%d_%d" % (jet,trk), "canvasProb_%d_%d" % (jet,trk),500,800))
+#            mapProbPredTot_jet.append(ROOT.TH2F("mapProbPredTot_%d_%d" % (jet,trk), "mapProbPredTot_%d_%d" % (jet,trk), jetDim,-jetDim/2,jetDim/2,jetDim,-jetDim/2,jetDim/2))
+#
+#         for lay in range(layNum) :
+#             mapTot_jet.append(ROOT.TH2F("mapTot_%d_%d" % (jet, lay), "mapTot_%d_%d" % (jet, lay), jetDim,-jetDim/2,jetDim/2,jetDim,-jetDim/2,jetDim/2))
+#             canvasTot_jet.append(ROOT.TCanvas("canvasTot_%d_%d" % (jet, lay), "canvasTot_%d_%d" % (jet, lay),500,800))
+#             graphTargetTot_jet.append(ROOT.TGraph())
+#            #  graphPredTot_jet.append(ROOT.TGraph(overlapNum*3))
+#             graphPredTot_jet.append(ROOT.TGraph())
+#
+#         mapTot.append(mapTot_jet)
+#         canvasTot.append(canvasTot_jet)
+#         graphTargetTot.append(graphTargetTot_jet)
+#         mapProbPredTot.append(mapProbPredTot_jet)
+#         canvasProb.append(canvasProb_jet)
+#         graphPredTot.append(graphPredTot_jet)
+#
+#
+#
+#
+#
+#     for jet in range(numPrint) :
+#         print("=================================== New Event ======================================")
+#
+#         j_eff = jet+validation_offset
+#        #  j_eff = jet #WARNING, is this intended? 
+#
+#         #check if lay1 is broken
+#         brokenLay_flag = False
+#         brokenLay_cut = 0
+#         for x in range(jetDim) :
+#             for y in range(jetDim) :
+#                if(input_[j_eff][x][y][1] > 0.0001) :
+#                    brokenLay_flag = True
+#         if(not brokenLay_flag) :
+#            brokenLay_cut = 0.35
+#
+#         # fill the histos   
+#         for lay in range(layNum) :
+#             tarPoint = 0
+#             predPoint = 0
+#             graphPredTot[jet][lay].SetMarkerColor(7)
+#             graphPredTot[jet][lay].SetMarkerStyle(28)
+#             graphPredTot[jet][lay].SetMarkerSize(3)
+#             graphTargetTot[jet][lay].SetMarkerColor(6)
+#             graphTargetTot[jet][lay].SetMarkerStyle(2)
+#             graphTargetTot[jet][lay].SetMarkerSize(3)
+#             for x in range(jetDim) :
+#                 for y in range(jetDim) :
+#                     mapTot[jet][lay].SetBinContent(x+1,y+1,input_[j_eff][x][y][lay])
+#                     if(input_[j_eff][x][y][lay]>0) : print("input pixel:", "(x,y)=",x,y, ", layer=",lay, ", value=", input_[j_eff][x][y][lay])
+#                     for trk in range(overlapNum) :
+#                        if not DRAW_ONLY : 
+#                            mapProbPredTot[jet][trk].SetBinContent(x+1,y+1,validation_prob[j_eff][x][y][trk])
+#                        if(not ON_DATA) :
+#                            if target_prob[j_eff][x][y][trk] == 1 and lay==1:
+#                                xx= float(target_[j_eff][x][y][trk][0])/float(0.01)*0.01#normaliz. factor
+#                                yy= float(target_[j_eff][x][y][trk][1])/float(0.015)*0.01
+#                                graphTargetTot[jet][lay].SetPoint(tarPoint,x+xx-jetDim/2,y+yy-jetDim/2)
+#
+#                                x0,y0 = prop_on_layer(x+xx-jetDim/2, y+yy-jetDim/2,target_[j_eff][x][y][trk][2]*0.01,target_[j_eff][x][y][trk][3]*0.01,input_jeta[j_eff],0)
+#                                x2,y2 = prop_on_layer(x+xx-jetDim/2, y+yy-jetDim/2,target_[j_eff][x][y][trk][2]*0.01,target_[j_eff][x][y][trk][3]*0.01,input_jeta[j_eff],2)
+#                                x3,y3 = prop_on_layer(x+xx-jetDim/2, y+yy-jetDim/2,target_[j_eff][x][y][trk][2]*0.01,target_[j_eff][x][y][trk][3]*0.01,input_jeta[j_eff],3)
+#                                graphTargetTot[jet][0].SetPoint(tarPoint,x0,y0)
+#                                graphTargetTot[jet][2].SetPoint(tarPoint,x2,y2)
+#                                graphTargetTot[jet][3].SetPoint(tarPoint,x3,y3)
+#                                tarPoint = tarPoint+1
+#                        if not DRAW_ONLY :
+#                            if validation_prob[j_eff][x][y][trk] > (prob_thr-0.1*trk-brokenLay_cut) and lay==1 : #and   target_prob[j_eff][x][y][trk] == 1: #this is an useful option to debug
+#                                xx_pr= float(validation_par[j_eff][x][y][trk][0])/float(0.01)*0.01
+#                                yy_pr= float(validation_par[j_eff][x][y][trk][1])/float(0.015)*0.01
+#                                graphPredTot[jet][lay].SetPoint(predPoint,x+xx_pr-jetDim/2,y+yy_pr-jetDim/2)
+#
+#                                x0,y0 = prop_on_layer(x+xx_pr-jetDim/2, y+yy_pr-jetDim/2,validation_par[j_eff][x][y][trk][2]*0.01,validation_par[j_eff][x][y][trk][3]*0.01,input_jeta[j_eff],0)
+#                                x2,y2 = prop_on_layer(x+xx_pr-jetDim/2, y+yy_pr-jetDim/2,validation_par[j_eff][x][y][trk][2]*0.01,validation_par[j_eff][x][y][trk][3]*0.01,input_jeta[j_eff],2)
+#                                x3,y3 = prop_on_layer(x+xx_pr-jetDim/2, y+yy_pr-jetDim/2,validation_par[j_eff][x][y][trk][2]*0.01,validation_par[j_eff][x][y][trk][3]*0.01,input_jeta[j_eff],3)
+#                                graphPredTot[jet][0].SetPoint(predPoint,x0,y0)
+#                                graphPredTot[jet][2].SetPoint(predPoint,x2,y2)
+#                                graphPredTot[jet][3].SetPoint(predPoint,x3,y3)
+#                                predPoint = predPoint+1
+#
+#                                print("________________________________________")
+#                                print("New Pred, bin (x,y):",x-jetDim/2,y-jetDim/2)
+#                                if(not ON_DATA):
+#                                    print("target(x,y,eta,phi)=",target_[j_eff][x][y][trk][0]," ", target_[j_eff][x][y][trk][1]," ",target_[j_eff][x][y][trk][2]," ",target_[j_eff][x][y][trk][3]," ",target_[j_eff][x][y][trk][4],"Probabiity target=", target_prob[j_eff][x][y][trk])
+#                                    print("prediction(x,y,eta,phi)=",validation_par[j_eff][x][y][trk][0]," ", validation_par[j_eff][x][y][trk][1]," ",validation_par[j_eff][x][y][trk][2]," ",validation_par[j_eff][x][y][trk][3]," ",validation_par[j_eff][x][y][trk][4], "Probabiity pred=", validation_prob[j_eff][x][y][trk])
+#                                    print(" x0,y0=",x0,y0," x2,y2=",x2,y2," x3,y3=",x3,y3,)
+#
+#
+#     output_file = ROOT.TFile("DeepCore_mapValidation_ev{ev}.root".format(ev=jetNum),"recreate")
+#     from array import array as array2
+#
+#     if(RGB) : #set the color scheme
+#
+#         NCont=10
+#
+#         array_of_palette = []
+#         palette = []
+#
+#         Red =[1.,1.]
+#         Green =[1.,0.]
+#         Blue =[1.,0.]
+#         Stops =[0.,1.]
+#         StopsArray = array2('d', Stops)
+#         RedArray = array2('d', Red)
+#         GreenArray = array2('d', Green)
+#         BlueArray = array2('d', Blue)
+#         FI = TColor.CreateGradientColorTable(2, StopsArray, RedArray, GreenArray, BlueArray, NCont)
+#         for i in range(0,NCont) :
+#             palette.append(FI+i)
+#         paletteArray = array2('i',palette)
+#         palette[:]=[]
+#         array_of_palette.append(paletteArray)
+#
+#
+#         Red =[1.,0.]
+#         Green =[1.,0.]
+#         Blue =[1.,0.]
+#         Stops =[0.,1.]
+#         StopsArray = array2('d', Stops)
+#         RedArray = array2('d', Red)
+#         GreenArray = array2('d', Green)
+#         BlueArray = array2('d', Blue)
+#         FI = TColor.CreateGradientColorTable(2, StopsArray, RedArray, GreenArray, BlueArray, NCont)
+#         for i in range(0,NCont) :
+#             palette.append(FI+i)
+#         paletteArray = array2('i',palette)
+#         palette[:]=[]
+#         array_of_palette.append(paletteArray)
+#
+#         Red =[1.,0]
+#         Green =[1.,1]
+#         Blue =[1.,0.]
+#         Stops =[0.,1.]
+#         StopsArray = array2('d', Stops)
+#         RedArray = array2('d', Red)
+#         GreenArray = array2('d', Green)
+#         BlueArray = array2('d', Blue)
+#         FI = TColor.CreateGradientColorTable(2, StopsArray, RedArray, GreenArray, BlueArray, NCont)
+#         for i in range(0,NCont) :
+#             palette.append(FI+i)
+#         paletteArray = array2('i',palette)
+#         palette[:]=[]
+#         array_of_palette.append(paletteArray)
+#
+#         Red =[1.,0.]
+#         Green =[1.,0.]
+#         Blue =[1.,1.]
+#         Stops =[0.,1.]
+#         StopsArray = array2('d', Stops)
+#         RedArray = array2('d', Red)
+#         GreenArray = array2('d', Green)
+#         BlueArray = array2('d', Blue)
+#         FI = TColor.CreateGradientColorTable(2, StopsArray, RedArray, GreenArray, BlueArray, NCont)
+#         for i in range(0,NCont) :
+#             palette.append(FI+i)
+#         paletteArray = array2('i',palette)
+#         palette[:]=[]
+#         array_of_palette.append(paletteArray)
+#
+#     # build the cavases
+#     for jet in range(numPrint) :
+#
+#         #check if lay1 is broken!
+#         brokenLay_flag = False
+#         brokenLay_cut = 0
+#         for x in range(jetDim) :
+#             for y in range(jetDim) :
+#                if(input_[jet][x][y][1] > 0.0001) :
+#                    brokenLay_flag = True
+#         if(not brokenLay_flag) :
+#            brokenLay_cut = 0.35
+#
+#         for lay in range(layNum) :
+#             canvasTot[jet][lay].cd()
+#             mapTot[jet][lay].GetXaxis().SetRangeUser(-jetDim,jetDim)
+#             mapTot[jet][lay].GetYaxis().SetRangeUser(-jetDim,jetDim)
+#            #  mapTot[jet][lay].SetTitle("Pixel Map, cluster %d, layer %d, pt=%f, eta=%f" % (jet, lay+1, input_jpt[jet],input_jeta[jet]))
+#             mapTot[jet][lay].SetTitle("Pixel Window, layer %d" % (lay+1))
+#             mapTot[jet][lay].GetXaxis().SetTitle("x [pixel]")
+#             mapTot[jet][lay].GetYaxis().SetTitle("y [pixel]")
+#             mapTot[jet][lay].GetYaxis().SetTitleOffset(1)
+#             mapTot[jet][lay].GetZaxis().SetTitle("ADC count [/14k]")
+#             mapTot[jet][lay].GetZaxis().SetTitleOffset(-1.05)
+#             mapTot[jet][lay].GetXaxis().SetTitleSize(0.06)
+#             mapTot[jet][lay].GetYaxis().SetTitleSize(0.06)
+#             mapTot[jet][lay].GetZaxis().SetTitleSize(0.04)
+#             mapTot[jet][lay].GetXaxis().SetTitleOffset(0.7)
+#             mapTot[jet][lay].GetYaxis().SetTitleOffset(0.6)
+#
+#             latexCMS = ROOT.TLatex()
+#
+#
+#             if(not RGB) :
+#                 mapTot[jet][lay].Draw("colz")
+#
+#                 latexCMS.SetTextSize(0.05)
+#                 latexCMS.DrawLatex(-16.2,16.2,"#bf{#bf{CMS}} #scale[0.7]{#bf{#it{Simulation Preliminary}}}")
+#                 latexCMS.DrawLatex(12,16.2,"#bf{13 TeV}")
+#
+#             else :
+#                 gStyle.SetPalette(NCont,array_of_palette[lay])
+#                 mapTot[jet][lay].Draw("colz")
+#
+#                 latexCMS.SetTextSize(0.05)
+#                 latexCMS.DrawLatex(-16.2,16.2,"#bf{#bf{CMS}} #scale[0.7]{#bf{#it{Simulation Preliminary}}}")
+#                 latexCMS.DrawLatex(12,16.2,"#bf{13 TeV}")
+#
+#             if(jet==outEvent and RGB):
+#
+#
+#                 mapTot[jet][lay].GetZaxis().SetRangeUser(0,2.7)
+#                 canvasTot[jet][lay].SaveAs("RGB_PixelMap_input_layer%d_event%d.pdf" % (lay,jet))
+#                 canvasTot[jet][lay].SaveAs("RGB_PixelMap_input_layer%d_event%d.png" % (lay,jet))
+#
+#             if (not ON_DATA) :
+#                 graphTargetTot[jet][lay].Draw("SAME P")
+#             graphPredTot[jet][lay].Draw("SAME P")
+#
+#             graphTargetTot[jet][lay].SetLineColor(0)
+#             graphPredTot[jet][lay].SetLineColor(0)
+#             graphTargetTot[jet][lay].SetFillColor(0)
+#             graphPredTot[jet][lay].SetFillColor(0)
+#
+#             latexCMS.SetTextSize(0.05)
+#             latexCMS.DrawLatex(-16.2,16.2,"#bf{#bf{CMS}} #scale[0.7]{#bf{#it{Simulation Preliminary}}}")
+#             latexCMS.DrawLatex(12,16.2,"#bf{13 TeV}")
+#
+#
+#
+#             legTot = ROOT.TLegend(0.1,0.9,0.3,0.8);
+#             if (not ON_DATA) :
+#                 legTot.AddEntry(graphTargetTot[jet][lay], "Target")
+#             legTot.AddEntry(graphPredTot[jet][lay], "Prediction")
+#             legTot.SetTextSize(0.03);
+#             legTot.Draw("SAME")
+#
+#             canvasTot[jet][lay].Write()
+#
+#             if(jet==outEvent and RGB):
+#                 canvasTot[jet][lay].SaveAs("RGB_PixelMap_crosses_layer%d_event%d.pdf" % (lay,jet))
+#                 canvasTot[jet][lay].SaveAs("RGB_PixelMap_crosses_layer%d_event%d.png" % (lay,jet))
+#
+#         for trk in range(overlapNum) :
+#             canvasProb[jet][trk].cd()
+#             mapProbPredTot[jet][trk].GetXaxis().SetRangeUser(-jetDim,jetDim)
+#             mapProbPredTot[jet][trk].GetYaxis().SetRangeUser(-jetDim,jetDim)
+#             gStyle.SetPalette(57)
+#             mapProbPredTot[jet][trk].Draw("colz")
+#             mapProbPredTot[jet][trk].GetXaxis().SetTitle("x [pixel]")
+#             mapProbPredTot[jet][trk].GetYaxis().SetTitle("y [pixel]")
+#             mapProbPredTot[jet][trk].GetYaxis().SetTitleOffset(1.2)
+#            #  mapProbPredTot[jet][trk].SetTitle("TCP Prediction Map, cluster %d, overlap %d" % (jet, trk))
+#             mapProbPredTot[jet][trk].SetTitle("TCP Prediction Map, overlap %d" % (trk))
+#             mapProbPredTot[jet][trk].GetZaxis().SetTitle("Probability")
+#             mapProbPredTot[jet][trk].GetZaxis().SetTitleOffset(-1.05)
+#             mapProbPredTot[jet][trk].GetXaxis().SetTitleSize(0.06)
+#             mapProbPredTot[jet][trk].GetYaxis().SetTitleSize(0.06)
+#             mapProbPredTot[jet][trk].GetXaxis().SetTitleOffset(0.7)
+#             mapProbPredTot[jet][trk].GetYaxis().SetTitleOffset(0.6)
+#             if (not ON_DATA) :
+#                 graphTargetTot[jet][1].Draw("SAME P")
+#             graphPredTot[jet][1].Draw("SAME P")
+#
+#             latexCMS.SetTextSize(0.05)
+#             latexCMS.DrawLatex(-16.2,16.2,"#bf{#bf{CMS}} #scale[0.7]{#bf{#it{Simulation Preliminary}}}")
+#             latexCMS.DrawLatex(12,16.2,"#bf{13 TeV}")
+#
+#
+#             legProb = ROOT.TLegend(0.1,0.9,0.3,0.8);
+#             if (not ON_DATA) :
+#                legProb.AddEntry(graphTargetTot[jet][1], "Target")
+#             legProb.AddEntry(graphPredTot[jet][1], "Prediction")
+#             legProb.SetTextSize(0.03);
+#             legProb.Draw("SAME")
+#
+#             mapProbPredTot[jet][0].GetZaxis().SetRangeUser(0,1)
+#             canvasProb[jet][trk].Write()
+#
+#         if(jet==outEvent and RGB):
+#             canvasProb[jet][0].SaveAs("Probabiltiy_crosses_event%d.pdf" % (jet))#.png
+#             canvasProb[jet][0].SaveAs("Probabiltiy_crosses_event%d.png" % (jet))#.png
+#
+#     output_file.Close()
+#
+#     #plot of parameters distributions and residuals
+#     if(not ON_DATA) : 
+#         print("parameter file: start looping")
+#         pdf_par = mpl.backends.backend_pdf.PdfPages("parameter_file_ev{ev}.pdf".format(ev=jetNum))
+#
+#         for par in range(parNum) :
+#             bins = []# np.zeros(shape=(int(jetNum*valSplit)))
+#             bins_pred = []
+#             bins_target = []
+#             nbin =0
+#             n_sig_ok = 0
+#             for j in range (int(len(input_))) :
+#                 j_eff = j
+#                #  j_eff=j+validation_offset use this if you want to avoid to fill the histos with the event used in the training, but you have also to change the j range()
+#                 for x in range(jetDim) :
+#                     for y in range(jetDim) :
+#                         for trk in range(overlapNum) :
+#                             if target_prob[j_eff][x][y][trk] == 1 :
+#                            #  if validation_prob[j_eff][x][y][trk] > prob_thr-0.1*trk-brokenLay_cut  and target_prob[j_eff][x][y][trk] == 1:# only "associated" 
+#                                     if(par!=4) :
+#                                         if not DRAW_ONLY : bins.append((validation_par[j_eff][x][y][trk][par] - target_[j_eff][x][y][trk][par])*0.01)
+#                                         if not DRAW_ONLY : bins_pred.append(validation_par[j_eff][x][y][trk][par]*0.01)
+#                                         bins_target.append(target_[j_eff][x][y][trk][par]*0.01)
+#                                     else :
+#                                         if not DRAW_ONLY : bins.append((validation_par[j_eff][x][y][trk][par] - target_[j_eff][x][y][trk][par])/target_[j_eff][x][y][trk][par])  #relative
+#                                         if not DRAW_ONLY :  bins_pred.append(validation_par[j_eff][x][y][trk][par])
+#                                         bins_target.append(target_[j_eff][x][y][trk][par])
+#                                     nbin = nbin+1
+#                                     if not DRAW_ONLY :
+#                                          if(validation_par[j_eff][x][y][trk][par]*target_[j_eff][x][y][trk][par]>0) : #same Sign
+#                                            n_sig_ok = n_sig_ok+1
+#             if nbin>0 :
+#                 fracsig=n_sig_ok/float(nbin)
+#             else :
+#                 fracsig = 0
+#             print("Parameter {PAR}, number of correct sign={n}, fraction={f}".format(PAR=par, n=n_sig_ok, f=fracsig))
+#             plt.figure()
+#             if(par!=4) :
+#                 pylab.hist(bins,70, facecolor='darkorange', alpha=0.75, range=(-0.03,0.03))
+#             else :
+#                 pylab.hist(bins,200, facecolor='darkorange', alpha=0.75, range=(-2,5))#range=(-0.2,0.2))#range=(-2,5)) #relative
+#             if(par == 0) :
+#                 pylab.title('Residual distribution - x',fontsize=22)
+#             if(par == 1) :
+#                 pylab.title('Residual distribution - y',fontsize=22)
+#             if(par == 2) :
+#                 pylab.title('Residual distribution - $\eta$',fontsize=22)
+#                 plt.text(-0.032,1030, "CMS ", weight='bold', size=17)
+#                 plt.text(-0.032,950, "Simulation Preliminary", style='italic', size=14)
+#                 plt.text(0.0215,1030, "13 TeV", size = 17)
+#                 plt.text(0.0025,915, r'QCD events ($\langle PU \rangle=30$)',size=14)
+#                 plt.text(0.0025,830,r'1.8 TeV $<\hat p_T<$2.4 TeV',size=14)
+#                 plt.text(0.0025,745,r'$p_T^{jet}>1$ TeV, $|\eta^{jet}|<1.4$',size=14)
+#                 if not DRAW_ONLY : mean = np.array(bins).mean()
+#                 if not DRAW_ONLY : sigma = np.array(bins).std()
+#                #if not DRAW_ONLY :  plt.text(0.009, 550, "Mean =%f"%(mean), size=14)
+#                 if not DRAW_ONLY : plt.text(0.0145, 465, "$\sigma_{res}$ = %.3f"%(sigma), size=14)
+#
+#             if(par == 3) :
+#                 pylab.title('Residual distribution - $\phi$',fontsize=22)
+#             if(par == 4) :
+#                 pylab.title('Residual distribution - $p_T$',fontsize=22)
+#             pylab.ylabel('Events/0.0008',fontsize=18)
+#             pylab.xlabel('(prediction-target)/target',fontsize=18) #only 1/pt
+#             if(par==0 or par==1) : #relative
+#                 pylab.xlabel('prediction-target [cm]',fontsize=22)
+#             elif(par==2 or par==3) : #relative
+#                 pylab.xlabel('prediction-target',fontsize=22)
+#            #  else : #relative
+#            #      pylab.xlabel('prediction-target [1/GeV]',fontsize=22)
+#
+#             plt.grid(True)
+#             if(RGB) :
+#                 pylab.savefig("residual_{jj}_{PAR}.pdf".format(PAR=par,jj=jetNum))#.png
+#                 pylab.savefig("residual_{jj}_{PAR}.png".format(PAR=par,jj=jetNum))#.png
+#
+#             pdf_par.savefig()
+#
+#             plt.figure()
+#             if(par!=4) :
+#                 pylab.hist(bins_target,70, facecolor='royalblue', alpha=0.75, range=(-0.03,0.03))
+#             else :
+#                 pylab.hist(bins_target,100, facecolor='royalblue', alpha=0.75, range=(-0,0.2))
+#
+#             if(par == 0) :
+#                 pylab.title('Target distribution - x',fontsize=22)
+#             if(par == 1) :
+#                 pylab.title('Target distribution - y',fontsize=22)
+#             if(par == 2) :
+#                 pylab.title('Target distribution - $\eta$',fontsize=22)
+#             if(par == 3) :
+#                 pylab.title('Target distribution - $\phi$',fontsize=22)
+#             if(par == 4) :
+#                 pylab.title('Target distribution - $p_T$',fontsize=22)
+#             if(par==0 or par==1) :
+#                 pylab.xlabel('target [cm]',fontsize=18)
+#             elif(par==2 or par==3) :
+#                 pylab.xlabel('target',fontsize=18)
+#             else :
+#                 pylab.xlabel('prediction-target [1/GeV]',fontsize=18)
+#             pylab.ylabel('entries',fontsize=18)
+#             plt.grid(True)
+#             if(RGB) :
+#                 pylab.savefig("target_{jj}_{PAR}.pdf".format(PAR=par,jj=jetNum))#.png
+#                 pylab.savefig("target_{jj}_{PAR}.png".format(PAR=par,jj=jetNum))#.png
+#
+#             pdf_par.savefig()
+#
+#             plt.figure()
+#             if(par!=4) :
+#                 pylab.hist(bins_pred,70, facecolor='red', alpha=0.75, range=(-0.03,0.03))
+#             else :
+#                 pylab.hist(bins_pred,200, facecolor='red', alpha=0.75, range=(-0.2,0.2))
+#
+#             if(par == 0) :
+#                 pylab.title('Prediction distribution - x',fontsize=22)
+#             if(par == 1) :
+#                 pylab.title('Prediction distribution - y',fontsize=22)
+#             if(par == 2) :
+#                 pylab.title('Prediction distribution - $\eta$',fontsize=22)
+#             if(par == 3) :
+#                 pylab.title('Prediction distribution - $\phi$',fontsize=22)
+#             if(par == 4) :
+#                 pylab.title('Prediction distribution - $p_T$',fontsize=22)
+#             if(par==0 or par==1) :
+#                 pylab.xlabel('prediction [cm]',fontsize=18)
+#             elif(par==2 or par==3) :
+#                 pylab.xlabel('prediction',fontsize=18)
+#             else :
+#                 pylab.xlabel('prediction-target [1/GeV]',fontsize=18)
+#             pylab.ylabel('entries',fontsize=18)
+#             plt.grid(True)
+#             if(RGB) :
+#                 pylab.savefig("prediction_{jj}_{PAR}.pdf".format(PAR=par,jj=jetNum))#.png
+#                 pylab.savefig("prediction_{jj}_{PAR}.png".format(PAR=par,jj=jetNum))#.png
+#
+#             pdf_par.savefig()
+#
+#             #scatter plot
+#             if(not DRAW_ONLY) :
+#                 plt.figure()
+#                 if(par == 0) :
+#                     plt.hist2d(bins_pred,bins_target,bins=50,range = [[-0.015, 0.015], [-0.015, 0.015]], cmap=plt.cm.viridis)#, marker='+')
+#                     plt.xlabel('x prediction [cm]')
+#                     plt.ylabel('x target [cm]')
+#                     plt.colorbar()
+#                 if(par == 1) :
+#                     plt.hist2d(bins_pred,bins_target,bins=50,range = [[-0.02, 0.02], [-0.02, 0.02]], cmap=plt.cm.viridis)
+#                     plt.xlabel('y prediction [cm]')
+#                     plt.ylabel('y target [cm]')
+#                     plt.colorbar()
+#                 if(par == 2) :
+#                     plt.hist2d(bins_pred,bins_target,bins=50,range = [[-0.03, 0.03], [-0.03, 0.03]], cmap=plt.cm.viridis)
+#                     plt.xlabel('$\eta$ prediction', fontsize=18, labelpad=-5)
+#                     plt.ylabel('$\eta$ target', fontsize=18, labelpad=-5)
+#                     plt.colorbar()
+#                     plt.text(-0.029,0.026, "CMS ", weight='bold', size=17, color="white")
+#                     plt.text(-0.029,0.023, "Simulation Preliminary", style='italic', size=14, color="white")
+#                     plt.text(0.017,0.026, "13 TeV", size = 17,color="white")
+#                     plt.text(-0.005,-0.015, r'QCD events ($\langle PU \rangle=30$)',size=14,color="white")
+#                     plt.text(-0.005,-0.02,r'1.8 TeV $<\hat p_T<$2.4 TeV',size=14,color="white")
+#                     plt.text(-0.005,-0.025,r'$p_T^{jet}>1$ TeV, $|\eta^{jet}|<1.4$',size=14,color="white")
+#
+#
+#                 if(par == 3) :
+#                     plt.hist2d(bins_pred,bins_target,bins=50,range = [[-0.03, 0.03], [-0.03, 0.03]], cmap=plt.cm.viridis)
+#                     plt.xlabel('$\phi$ prediction')
+#                     plt.ylabel('$\phi$ target')
+#                     plt.colorbar()
+#                 if(par == 4) :
+#                     plt.hist2d(bins_pred,bins_target,bins=30,range = [[0, 0.15], [0, 0.15]])
+#                     plt.xlabel('$p_T$ prediction [1/GeV]')
+#                     plt.ylabel('$p_T$ target [1/GeV]')
+#                     plt.colorbar()
+#                 if(RGB) :
+#                     pylab.savefig("predVStarget_{jj}_{PAR}.pdf".format(PAR=par,jj=jetNum))#.png
+#                     pylab.savefig("predVStarget_{jj}_{PAR}.png".format(PAR=par,jj=jetNum))#.png
+#
+#                 pdf_par.savefig()
+#         pdf_par.close()
